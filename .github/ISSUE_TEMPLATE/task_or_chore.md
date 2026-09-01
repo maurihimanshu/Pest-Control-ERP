@@ -13,7 +13,7 @@ A clear description of the technical work to be performed.
 - [ ] Customer Android App (`/customer-app`)
 - [ ] Technician Android App (`/technician-app`)
 - [ ] Web Admin ERP (`/admin-web`)
-- [ ] Firebase Functions & Rules (`/functions`, `/firestore.rules`)
+- [ ] Spring Boot Backend & PostgreSQL (`/backend`, `/src/main/resources/db/migration`)
 - [ ] CI/CD & DevOps (`/.github/workflows`)
 - [ ] Documentation (`/docs`)
 

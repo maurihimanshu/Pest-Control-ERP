@@ -9,7 +9,8 @@ Closes #
 - [ ] Customer Android Application
 - [ ] Technician Android Application (Offline / Room DB / WorkManager)
 - [ ] Web Admin ERP Dashboard (React / TypeScript)
-- [ ] Firebase Cloud Functions / Firestore Rules
+- [ ] Spring Boot REST Backend / PostgreSQL Flyway Migrations
+- [ ] Redis / RabbitMQ Infrastructure
 - [ ] CI/CD / DevOps / Documentation
 
 ## 🧪 Testing Performed

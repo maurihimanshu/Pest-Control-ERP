@@ -13,8 +13,9 @@ A clear and concise description of what the bug is.
 - [ ] Customer Android Application
 - [ ] Technician Android Application (Offline / Field)
 - [ ] Web Admin ERP Dashboard
-- [ ] Firebase Cloud Functions / Backend
-- [ ] Firestore Database / Security Rules
+- [ ] Spring Boot REST Backend / API
+- [ ] PostgreSQL Database / Flyway Migrations
+- [ ] Redis / RabbitMQ Infrastructure
 - [ ] Other: ________________
 
 ## 🔁 Steps to Reproduce
@@ -40,7 +41,7 @@ If applicable, add screenshots or screen recordings to help explain your problem
 
 ## 🪵 Relevant Logs / Console Output
 ```text
-Paste any relevant Android Logcat, Browser DevTools Console, or Cloud Functions logs here.
+Paste any relevant Android Logcat, Browser DevTools Console, or Spring Boot Backend logs here.
 ```
 
 ## ⚠️ Additional Context
