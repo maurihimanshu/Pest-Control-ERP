@@ -188,17 +188,17 @@ When critical state mutations occur in Spring Boot, transactional events are pub
 
 ---
 
-## 7. Migration from Serverless to Modular Monolith
+## 7. Architecture Rationale: Modular Monolith vs. Distributed Serverless
 
-| Characteristic | Previous Serverless Design | Target Spring Boot Architecture |
+| Dimension | Distributed Serverless Prototype (Deprecated) | Enterprise Spring Boot Architecture (Approved) |
 | :--- | :--- | :--- |
-| **Backend Engine** | Firebase Cloud Functions (Node.js) | Java 21 + Spring Boot 3.3 Modular Monolith |
-| **Data Consistency** | Eventual consistency (NoSQL) | Strong ACID transactions (PostgreSQL) |
+| **Backend Engine** | Distributed Cloud Triggers | Java 21 + Spring Boot 3.x Modular Monolith |
+| **Data Consistency** | Eventual consistency (NoSQL) | Strong ACID transactions (PostgreSQL 16) |
 | **Relational Integrity**| Manual document references | Foreign keys, constraints, cascade rules |
-| **Business Logic** | Distributed across cloud triggers | Co-located in Spring Domain Services |
-| **Async Tasks** | Cloud Tasks / PubSub | RabbitMQ Queues with retry & dead-lettering |
-| **Local Development** | Cloud Emulators | Docker Compose (PostgreSQL, Redis, RabbitMQ) |
-| **Testing** | Scripted emulator tests | JUnit 5 + Mockito + Testcontainers |
+| **Business Logic** | Scattered serverless functions | Co-located in Spring Domain Services |
+| **Async Events** | Cloud messaging pipelines | RabbitMQ Topics & Queues with Dead Letter Exchanges |
+| **Local Development** | Cloud Emulators | Standard Docker Compose (PostgreSQL, Redis, RabbitMQ) |
+| **Testing Suite** | Emulator integration scripts | JUnit 5 + Mockito + Testcontainers |
 
 ---
 
