@@ -2,10 +2,10 @@
 ## Pest Control Enterprise Resource Planning (ERP) Platform
 
 Thank you for contributing to the **Pest Control ERP Platform**! This guide sets out the development workflow, coding standards, branch conventions, and testing requirements across our multi-platform codebase:
-* **Customer Android Application** (Java 21)
-* **Technician Android Application** (Java 21, Offline-First)
-* **Web Admin ERP Dashboard** (React 18 + TypeScript)
-* **Firebase Backend & Cloud Functions** (TypeScript, Node.js 20)
+* **Backend Core:** Java 21 + Spring Boot 3.3.x (Maven)
+* **Customer Android Application:** Java 21
+* **Technician Android Application:** Java 21 (Offline-First)
+* **Web Admin ERP Dashboard:** React 18 + TypeScript
 
 ---
 
@@ -15,9 +15,9 @@ Thank you for contributing to the **Pest Control ERP Platform**! This guide sets
 2. [Local Development Environment Setup](#2-local-development-environment-setup)
 3. [Git Branching Strategy & Workflow](#3-git-branching-strategy--workflow)
 4. [Platform-Specific Coding Standards](#4-platform-specific-coding-standards)
-   - [4.1 Android Applications (Customer & Technician)](#41-android-applications-customer--technician)
-   - [4.2 Admin Web Dashboard (React + TypeScript)](#42-admin-web-dashboard-react--typescript)
-   - [4.3 Cloud Functions & Backend (TypeScript)](#43-cloud-functions--backend-typescript)
+   - [4.1 Backend (Java 21 / Spring Boot / Maven)](#41-backend-java-21--spring-boot--maven)
+   - [4.2 Android Applications (Customer & Technician)](#42-android-applications-customer--technician)
+   - [4.3 Admin Web Dashboard (React + TypeScript)](#43-admin-web-dashboard-react--typescript)
 5. [Commit Message Conventions](#5-commit-message-conventions)
 6. [Pull Request (PR) Process & Checklist](#6-pull-request-pr-process--checklist)
 7. [Security, Secrets & Environment Hygiene](#7-security-secrets--environment-hygiene)
@@ -26,36 +26,40 @@ Thank you for contributing to the **Pest Control ERP Platform**! This guide sets
 
 # 1. Core Engineering Principles
 
-1. **Zero-Trust Client Access:** Never calculate prices, discounts, or state transitions on the client side. Business rules must be verified in Firebase Cloud Functions.
+1. **Zero-Trust Client Access:** Never calculate prices, discounts, or state transitions on the client side. Business rules must be verified in Spring Boot domain services.
 2. **Offline-Resilient Field Operations:** Any feature added to the Technician App must gracefully handle network disconnection and queue operations in SQLite (Room DB) via Android `WorkManager`.
-3. **Clean Code & Strong Typing:** Write self-documenting code with strict types (no `any` in TypeScript; strong object models and immutable DTOs in Java).
-4. **Test Coverage:** All business-critical logic (pricing engine, state transitions, security rules) must include unit and integration tests.
+3. **Clean Code & Strong Typing:** Write self-documenting code with strict types (no `any` in TypeScript; strong DTOs and immutable records in Java 21).
+4. **Test-Driven Reliability:** All business-critical logic (pricing engine, state transitions, Flyway migrations) must include unit tests (JUnit 5 / Mockito) and integration tests (Testcontainers).
 
 ---
 
 # 2. Local Development Environment Setup
 
 ### Required Tooling:
-* **Java Development Kit (JDK):** Version **21** (Temurin / OpenJDK).
+* **Java Development Kit (JDK):** Version **21** (Eclipse Temurin / OpenJDK 21).
+* **Build Tool:** Apache Maven **3.9+**.
 * **Android Studio:** Ladybug (2024.2+) or later with Android SDK 34/35.
 * **Node.js & Package Manager:** Node.js **20 LTS** and `npm` / `pnpm`.
-* **Firebase CLI:** Install globally via `npm install -g firebase-tools`.
-* **Git:** Configured with your official work email and GPG commit signing (recommended).
+* **Docker & Docker Compose:** For running local PostgreSQL 16, Redis 7, and RabbitMQ 3.13 instances.
+* **Git:** Configured with your official work email and GPG commit signing.
 
-### Initial Setup:
+### Local Infrastructure Bootstrapping:
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-org/pest-control-erp.git
-cd pest-control-erp
+git clone https://github.com/maurihimanshu/Pest-Control-ERP.git
+cd Pest-Control-ERP
 
-# 2. Install Firebase tools & login
-firebase login
+# 2. Start local PostgreSQL, Redis, and RabbitMQ via Docker Compose
+docker compose -f infrastructure/docker-compose.local.yml up -d
 
-# 3. Setup Web Admin dependencies (when initialized)
-cd admin-web && npm install
+# 3. Build & run the Spring Boot backend
+cd backend
+mvn clean spring-boot:run
 
-# 4. Setup Cloud Functions dependencies (when initialized)
-cd ../functions && npm install
+# 4. Build & run the Web Admin ERP
+cd ../admin-web
+npm install
+npm run dev
 ```
 
 ---
@@ -75,15 +79,26 @@ We follow **Git Flow** with strict branch protection rules on `main` and `stagin
 ```
 
 ### Branch Naming Conventions:
-* `feature/<component>-<short-description>` (e.g., `feature/tech-app-camera-compression`, `feature/admin-dispatch-gantt`)
-* `bugfix/<component>-<issue-description>` (e.g., `bugfix/functions-coupon-rounding`, `bugfix/cust-app-otp-timeout`)
-* `hotfix/<critical-patch>` (e.g., `hotfix/payment-webhook-race-condition`)
+* `feature/<module>-<short-description>` (e.g., `feature/dispatch-gantt-board`, `feature/inventory-batch-expiry`)
+* `bugfix/<module>-<issue-description>` (e.g., `bugfix/pricing-coupon-tax-rounding`, `bugfix/tech-app-gps-timeout`)
+* `hotfix/<critical-patch>` (e.g., `hotfix/payment-webhook-duplicate-ack`)
 
 ---
 
 # 4. Platform-Specific Coding Standards
 
-## 4.1 Android Applications (Customer & Technician)
+## 4.1 Backend (Java 21 / Spring Boot / Maven)
+
+* **Architecture:** Modular Monolith with package-by-feature (`com.pestcontrol.modules.<module>`).
+* **Database Migrations:** Every database schema change must be a new Flyway migration script under `src/main/resources/db/migration/V{N}__{description}.sql`. Never modify existing migration scripts.
+* **Entities & Repositories:** Use Spring Data JPA. Explicitly define fetch types (`FetchType.LAZY` for `@ManyToOne` and `@OneToMany`).
+* **DTOs & Records:** Use Java 21 `record` or immutable POJOs for request and response DTOs.
+* **Input Validation:** Annotate all request DTOs with Jakarta Bean Validation (`@NotNull`, `@NotBlank`, `@Size`, `@Min`).
+* **Formatting:** Run `mvn spotless:apply` or `mvn checkstyle:check` prior to opening a PR.
+
+---
+
+## 4.2 Android Applications (Customer & Technician)
 
 * **Architecture:** MVVM (Model-View-ViewModel) + Repository Pattern + Clean Domain Use Cases.
 * **Build System:** Gradle with **Kotlin DSL (`build.gradle.kts`)**.
@@ -100,31 +115,17 @@ We follow **Git Flow** with strict branch protection rules on `main` and `stagin
 
 ---
 
-## 4.2 Admin Web Dashboard (React + TypeScript)
+## 4.3 Admin Web Dashboard (React + TypeScript)
 
 * **Language:** TypeScript with **`strict: true`** enabled in `tsconfig.json`. The `any` type is strictly forbidden.
 * **Styling:** TailwindCSS + Ant Design / Shadcn UI components.
 * **State Management:**
-  * Server State: React Query / TanStack Query (or Firebase onSnapshot hooks).
+  * Server State: React Query / TanStack Query.
   * Global Client State: Zustand or Redux Toolkit.
 * **Formatting & Linting:** Code must pass ESLint and Prettier without warnings prior to commit:
   ```bash
   npm run lint
   npm run format:check
-  ```
-
----
-
-## 4.3 Cloud Functions & Backend (TypeScript)
-
-* **Runtime:** Node.js 20 on Cloud Functions (v2).
-* **Input Validation:** Every callable Cloud Function must validate arguments using schema validators (e.g., **Zod**).
-* **Transactional Integrity:** Any booking status progression or inventory decrement must run inside a **Firestore Transaction** (`db.runTransaction()`).
-* **Error Handling:** Use `HttpsError` with appropriate error codes (`unauthenticated`, `permission-denied`, `invalid-argument`, `failed-precondition`).
-* **Security Rules Testing:** Changes to `firestore.rules` or `storage.rules` must be verified using the Firebase Local Emulator Suite:
-  ```bash
-  firebase emulators:start --only firestore,functions
-  npm test
   ```
 
 ---
@@ -153,10 +154,10 @@ We adhere to the [Conventional Commits](https://www.conventionalcommits.org/) sp
 
 ### Examples:
 ```text
-feat(cust-app): implement Google Maps pin address selection
-fix(functions): prevent double-invocation on payment webhook retry
-refactor(tech-app): migrate local photo cache to WebP compressor
-docs(srs): update state machine transition table for reschedule flow
+feat(bookings): implement 3-tier work order auto-generation
+fix(pricing): correct tax calculation on partial coupon discount
+refactor(tech-app): migrate local photo queue to Room DB with SQLCipher
+docs(api): update OpenAPI contract for offline visit sync endpoint
 ```
 
 ---
@@ -165,12 +166,8 @@ docs(srs): update state machine transition table for reschedule flow
 
 1. **Keep PRs Focused:** Limit PRs to a single feature or bugfix ($< 400$ lines of diff preferred).
 2. **Sync with Base:** Always rebase your feature branch onto the latest `staging` before opening a PR.
-3. **PR Description:** Fill out the PR template completely:
-   * Summary of changes.
-   * Linked issue/ticket number (e.g., `Closes #124`).
-   * Screenshots / video recordings for UI changes.
-   * Steps to manually test the changes.
-4. **Automated Checks:** All CI/CD pipelines (linting, static analysis, unit tests) must be green.
+3. **PR Description:** Fill out the PR template completely (summary of changes, linked ticket, testing steps, screenshots).
+4. **Automated Checks:** All CI/CD pipelines (Testcontainers, linting, build checks) must be green.
 5. **Code Reviews:** Requires at least **1 approving review** from a Lead/Senior developer before merge.
 
 ---
@@ -181,13 +178,12 @@ docs(srs): update state machine transition table for reschedule flow
 > **NEVER commit sensitive credentials, API keys, or private configuration files to Git.**
 
 ### Prohibited from Version Control (`.gitignore` enforced):
+* `application-prod.yml` / production database passwords
 * `google-services.json` (Production Android keys)
 * `service-account-key.json` (Firebase Admin SDK private keys)
 * `.env`, `.env.local`, `.env.production`
 * Keystores (`*.jks`, `*.keystore`) and signing password properties
 * Local SQLite / Room test databases
-
-Use `.env.example` templates to document required environment variables without committing actual secrets.
 
 ---
 

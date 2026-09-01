@@ -1,81 +1,89 @@
 # 🐜 Enterprise Pest Control Management & ERP Platform
 ### Commercial & Technical Project Proposal
 
+**Repository:** `https://github.com/maurihimanshu/Pest-Control-ERP`  
+**Backend Architecture:** Java 21 + Spring Boot 3.3.x (Modular Monolith)  
+**Primary Database:** PostgreSQL 16  
+**Cache & Message Broker:** Redis 7.2 & RabbitMQ 3.13  
+**Client Applications:** Customer Android (Java 21), Technician Android (Java 21, Offline-First), Admin Web (React 18 + TypeScript)  
+
 ---
 
 ## 📌 Executive Summary
 
 Modern pest control operations require seamless orchestration between customer acquisition, field technician dispatching, on-site service verification, inventory control, and financial reporting. 
 
-This proposal presents a **centralized, digital-first Pest Control Enterprise Resource Planning (ERP) Platform**. The system unifies customer self-service, offline-capable field workforce management, and executive operational control into a secure, real-time cloud ecosystem.
+This repository houses the complete engineering and product documentation for the **Pest Control Enterprise Resource Planning (ERP) Platform**. The system unifies customer self-service, offline-capable field workforce management, and executive operational control into a robust, high-performance **Spring Boot Modular Monolith** backed by PostgreSQL, Redis, and RabbitMQ.
 
 ```text
-┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                   Unified ERP Ecosystem                                         │
-├───────────────────────────────┬───────────────────────────────┬─────────────────────────────────┤
-│    📱 Customer Android App    │    📱 Technician Android App  │       💻 Admin Web ERP          │
-│  (Booking, Tracking, Payments)│ (Offline Jobs, Photos, Sign)  │  (Dispatch, Finances, Reports)  │
-└───────────────────────────────┴───────────────────────────────┴─────────────────────────────────┘
-                                                ▲
-                                                │ (Real-Time Sync)
-                                                ▼
-                               ┌─────────────────────────────────┐
-                               │     ☁️ Firebase Cloud Engine    │
-                               │ (Auth, Firestore, Cloud Funcs)  │
-                               └─────────────────────────────────┘
+                         ┌──────────────────────────┐
+                         │      React Admin Web     │
+                         │   React 18 + TypeScript  │
+                         └────────────┬─────────────┘
+                                      │ HTTPS / REST
+                         ┌────────────▼─────────────┐
+                         │       REST API            │
+                         │      Spring Boot          │
+                         │        Java 21           │
+                         └────────────┬─────────────┘
+                                      │
+        ┌─────────────────────────────┼──────────────────────────────┐
+        │                             │                              │
+        ▼                             ▼                              ▼
+ Customer Android              Technician Android              Admin Web
+ Java 21                       Java 21                         React/TS
+ Firebase Auth                 Firebase Auth                   Firebase Auth
+ REST API                      REST API                        REST API
+ Room Database                 Room Database                   Ant Design
+ WorkManager                   WorkManager                     Recharts
+ CameraX                       CameraX                         Vite
+        │                             │                              │
+        └─────────────────────────────┼──────────────────────────────┘
+                                      │
+                             ┌────────▼─────────┐
+                             │   Spring Boot    │
+                             │ Modular Monolith │
+                             └────────┬─────────┘
+                                      │
+                    ┌─────────────────┼──────────────────┐
+                    ▼                 ▼                  ▼
+               PostgreSQL          Redis             RabbitMQ
+               Primary DB          Cache             Async Events
+                    │
+                    ▼
+              Object Storage
+          Photos / Documents / PDFs
 ```
 
 ---
 
-## 📂 Project Documentation Index
+## 📂 Comprehensive Documentation Suite (`docs/`)
 
-All detailed specifications, architecture designs, resource requirements, and cost models are available in the dedicated documentation suite:
+All detailed specifications, architecture designs, database DDL schemas, API contracts, offline sync protocols, and cost models are available in the dedicated documentation suite:
 
 | Document | Description | Direct Link |
 | :--- | :--- | :--- |
-| 📋 **Software Requirements Specification (SRS)** | Complete module-by-module functional requirements, database schema, RBAC matrix, Cloud Functions API, and security rules. | [**`docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md`**](./docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md) |
-| ⏱️ **Project Estimation & Resource Plan** | Work Breakdown Structure (WBS), 16-week sprint schedule, manpower skill sets, and development cost estimates. | [**`docs/PROJECT_ESTIMATION_AND_RESOURCE_PLAN.md`**](./docs/PROJECT_ESTIMATION_AND_RESOURCE_PLAN.md) |
-| ☁️ **Infrastructure & Operating Costs** | Zero-manpower cloud hosting, database, Google Maps, SMS gateways, and SaaS operating expenses across business scales. | [**`docs/INFRASTRUCTURE_AND_OPERATING_COSTS.md`**](./docs/INFRASTRUCTURE_AND_OPERATING_COSTS.md) |
-| 🛡️ **Security Policy & Standards** | Zero-trust architecture, encryption in transit/rest, offline data security, anti-tampering, and responsible disclosure. | [**`SECURITY.md`**](./SECURITY.md) |
+| 📋 **Software Requirements Specification (SRS)** | Complete module-by-module functional requirements, user roles, 3-tier domain model, and 3-release scope. | [**`docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md`**](./docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md) |
+| 🏛️ **System Architecture** | High-level C4 container architecture, modular monolith design, technology matrix, and decoupled event pipelines. | [**`docs/SYSTEM_ARCHITECTURE.md`**](./docs/SYSTEM_ARCHITECTURE.md) |
+| ⚙️ **Backend Architecture** | Spring Boot 3.3, Java 21, Maven package structure, Spring Security filter, Flyway migrations, Redis, and RabbitMQ. | [**`docs/BACKEND_ARCHITECTURE.md`**](./docs/BACKEND_ARCHITECTURE.md) |
+| 🗄️ **Database Design & Schema** | PostgreSQL 16 DDL tables, foreign keys, indexes, 3-tier booking schema, inventory tables, and audit logs. | [**`docs/DATABASE_DESIGN.md`**](./docs/DATABASE_DESIGN.md) |
+| 🌐 **REST API Specification** | OpenAPI / Springdoc specification, standard response envelopes, paginated queries, and `/api/v1/*` contracts. | [**`docs/API_SPECIFICATION.md`**](./docs/API_SPECIFICATION.md) |
+| 🔐 **Authentication & Authorization** | Firebase ID token verification, Spring Security filter pipeline, RBAC matrix, and SpEL method security. | [**`docs/AUTHENTICATION_AND_AUTHORIZATION.md`**](./docs/AUTHENTICATION_AND_AUTHORIZATION.md) |
+| 🔄 **Booking State Machine** | Decoupled state machines for Commercial Bookings, Work Orders, Service Visits, and Payments. | [**`docs/BOOKING_STATE_MACHINE.md`**](./docs/BOOKING_STATE_MACHINE.md) |
+| 📶 **Offline-First Synchronization** | Android Room SQLite action queue, WorkManager sync, CameraX WebP compression, and conflict resolution rules. | [**`docs/OFFLINE_SYNC.md`**](./docs/OFFLINE_SYNC.md) |
+| 💳 **Payment & Invoicing** | Gateway webhooks (Razorpay/Stripe), HMAC verification, COD field reconciliation, and automated PDF invoicing. | [**`docs/PAYMENT_ARCHITECTURE.md`**](./docs/PAYMENT_ARCHITECTURE.md) |
+| 🔔 **Notification Architecture** | Multi-channel notification pipeline (FCM Push, Transactional SMS, Thymeleaf HTML Emails, WhatsApp). | [**`docs/NOTIFICATION_ARCHITECTURE.md`**](./docs/NOTIFICATION_ARCHITECTURE.md) |
+| 🧪 **Inventory & Chemical Tracking** | Chemical product catalog, batch FIFO expiry tracking, multi-tier warehouse allocation, and COGS accounting. | [**`docs/INVENTORY_AND_CHEMICALS.md`**](./docs/INVENTORY_AND_CHEMICALS.md) |
+| 📅 **AMC & Recurring Services** | Annual Maintenance Contract lifecycle, automated daily Spring Scheduler cron visit generation, and renewals. | [**`docs/AMC_ARCHITECTURE.md`**](./docs/AMC_ARCHITECTURE.md) |
+| 📊 **Reporting & Analytics** | PostgreSQL operational analytics, pre-aggregated daily rollup tables, executive KPIs, and async CSV/Excel exports. | [**`docs/REPORTING.md`**](./docs/REPORTING.md) |
+| 🛡️ **Security Policy & Standards** | Zero-trust architecture, encryption in transit/rest, offline data security, anti-tampering, and incident SLAs. | [**`SECURITY.md`**](./SECURITY.md) |
+| 🧪 **Testing Strategy** | Quality assurance pyramid, JUnit 5, Mockito, Testcontainers (Postgres/Redis/RabbitMQ), and Android Room tests. | [**`docs/TESTING_STRATEGY.md`**](./docs/TESTING_STRATEGY.md) |
+| 🚀 **Deployment Architecture** | Docker multi-stage builds, Nginx load balancing, production container topology, and GitHub Actions CI/CD. | [**`docs/DEPLOYMENT_ARCHITECTURE.md`**](./docs/DEPLOYMENT_ARCHITECTURE.md) |
+| ⏱️ **Project Estimation & Resource Plan**| WBS effort estimates, 3-release sprint roadmap, team composition, skill sets, and development budget. | [**`docs/PROJECT_ESTIMATION_AND_RESOURCE_PLAN.md`**](./docs/PROJECT_ESTIMATION_AND_RESOURCE_PLAN.md) |
+| ☁️ **Infrastructure & Operating Costs** | Cloud compute VPS, Managed PostgreSQL, Redis, RabbitMQ, Object Storage, Maps API, and SMS operating costs. | [**`docs/INFRASTRUCTURE_AND_OPERATING_COSTS.md`**](./docs/INFRASTRUCTURE_AND_OPERATING_COSTS.md) |
+| 🤝 **Contributor Guide** | Developer local setup, Git Flow branching, Java 21 / React TS coding standards, and PR requirements. | [**`CONTRIBUTING.md`**](./CONTRIBUTING.md) |
 | 📜 **Commercial License** | Proprietary and confidential enterprise software license terms and rights reservation. | [**`LICENSE`**](./LICENSE) |
-| 🤝 **Contributor Guide** | Developer setup, Git Flow branching, Android/React/Cloud coding standards, and PR guidelines. | [**`CONTRIBUTING.md`**](./CONTRIBUTING.md) |
 | 📜 **Code of Conduct** | Community pledge, inclusive professional standards, and enforcement guidelines. | [**`CODE_OF_CONDUCT.md`**](./CODE_OF_CONDUCT.md) |
-
----
-
-## 🎯 Core Business Objectives & ROI
-
-1. **Eliminate Revenue Leakage:** Automated pricing calculation, tamper-proof Cloud Function billing, and cash reconciliation eliminate manual billing errors and uncollected dues.
-2. **Offline-Resilient Field Force:** Technicians can execute full treatment checklists, capture before/after photos, and obtain customer sign-offs in basements or remote zones with zero connectivity; the app auto-syncs when reconnected.
-3. **Optimized Dispatch & Resource Allocation:** Real-time visual dispatch board prevents double-booking, matches technician skill certifications with service requirements, and reduces travel overhead.
-4. **Enhanced Customer Retention:** Transparent real-time job tracking, digital PDF invoicing, service history, and support escalation improve customer satisfaction and recurring AMC renewals.
-5. **Multi-Branch & Agency Scalability:** Architecture supports regional branches/agencies with segregated customer lists, technician teams, and commission settlements.
-
----
-
-## 📱 System Applications Overview
-
-### 1. Customer Android Application (Java 21 / Jetpack)
-* **Instant Onboarding:** Mobile OTP login with automatic SMS detection.
-* **Smart Booking Engine:** Multi-property address book with Google Maps pin placement and time-slot selection.
-* **Transparent Pricing:** Dynamic breakdown of flat fees, area-based rates (sq. ft.), room configurations (BHK), and add-on treatments.
-* **Live Job Tracking:** Real-time status progression from assignment to completion.
-* **Flexible Payments:** Integrated payment gateway (Cards, UPI, Netbanking) and Cash on Delivery (COD).
-* **Service Records:** In-app PDF invoice downloads, treatment histories, and rating submissions.
-
-### 2. Field Technician Android Application (Offline-First, Java 21)
-* **Secure Authentication:** Employee ID / Mobile with PIN and device UUID pairing.
-* **Offline-First Workflow:** Full offline job execution powered by local SQLite (Room DB) and Android `WorkManager` background sync.
-* **On-Site Verification:** Timestamped and geotagged before/after photo capture with automatic client-side WebP compression ($<500\text{ KB}$).
-* **Material & Chemical Consumption Log:** Detailed chemical batch and dosage tracking per service visit.
-* **Digital Sign-Off:** On-screen customer signature capture or OTP sign-off verification.
-
-### 3. Web Admin ERP Dashboard (React 18 + TypeScript)
-* **Executive Command Center:** Real-time KPI counters (Daily Bookings, Active Field Techs, Revenue vs Expenses).
-* **Interactive Dispatch Board:** Gantt and calendar dispatch views with drag-and-drop manual reassignment.
-* **Dynamic Service & Pricing Management:** Tiered rate management, promo coupons, and service category controls.
-* **Operational Accounting:** Branch expense categorization, receipt uploads, and net operational margin tracking.
-* **Automated Billing & Reporting:** Sequential invoice numbering (`INV-2026-XXXXX`), CSV/PDF financial export, and low-rating escalation desk.
 
 ---
 
@@ -83,47 +91,44 @@ All detailed specifications, architecture designs, resource requirements, and co
 
 | Layer | Technology | Key Capabilities |
 | :--- | :--- | :--- |
+| **Backend Core** | Java 21 LTS + Spring Boot 3.3 (Maven) | Modular Monolith, Virtual Threads, Spring Security, Spring Data JPA, Hibernate |
+| **Primary Database** | PostgreSQL 16 | ACID Relational Store, Flyway migrations, JSONB audit logs |
+| **In-Memory Cache** | Redis 7.2 | Reference data caching, distributed Redlock for slot bookings |
+| **Message Broker** | RabbitMQ 3.13 | Asynchronous decoupled event routing (Notifications, Invoicing, Inventory) |
 | **Customer App** | Native Android (Java 21) | Android Jetpack, MVVM, Retrofit, Google Maps SDK, OTP Autofill |
-| **Technician App** | Native Android (Java 21) | SQLite Room DB, `WorkManager`, CameraX, Offline Transaction Queue |
+| **Technician App** | Native Android (Java 21) | SQLite Room DB + SQLCipher, `WorkManager`, CameraX, Offline Transaction Queue |
 | **Admin Web ERP** | React 18 + TypeScript | Vite, TailwindCSS, Ant Design, Recharts, Responsive Grid Layout |
-| **Backend & APIs** | Firebase Cloud Functions (v2) | Node.js 20, TypeScript, Serverless Callable Endpoints, Cron Schedulers |
-| **Database** | Cloud Firestore | Scalable NoSQL, Atomic Transactions, Aggregation Rollups |
-| **File Storage** | Firebase Cloud Storage | Encrypted PDF invoices, before/after service media |
-| **Security & Auth** | Firebase Auth + Custom Claims | Zero-trust token-based RBAC, Firebase App Check |
-| **Push Alerts** | Firebase Cloud Messaging (FCM) | Topic-based multicast notifications for customers, technicians, and dispatchers |
+| **Object Storage** | S3-Compatible / GCS / Cloud Storage | Provider-neutral binary store for photos, signatures, and PDF invoices |
+| **Identity Provider** | Firebase Authentication | Phone OTP, Employee PIN, Admin credentials $\rightarrow$ Spring Security Token Filter |
+| **Push Alerts** | Firebase Cloud Messaging (FCM) | HTTP v1 topic-based multicast alerts |
 
 ---
 
-## 🗓️ Delivery Roadmap (16-Week MVP)
+## 🗓️ Phased Release Strategy
 
 ```text
-┌──────────────┬──────────────┬──────────────┬──────────────┬──────────────┬──────────────┬──────────────┬──────────────┐
-│   SPRINT 1   │   SPRINT 2   │   SPRINT 3   │   SPRINT 4   │   SPRINT 5   │   SPRINT 6   │   SPRINT 7   │   SPRINT 8   │
-│  WEEKS 1–2   │  WEEKS 3–4   │  WEEKS 5–6   │  WEEKS 7–8   │  WEEKS 9–10  │ WEEKS 11–12  │ WEEKS 13–14  │ WEEKS 15–16  │
-├──────────────┼──────────────┼──────────────┼──────────────┼──────────────┼──────────────┼──────────────┼──────────────┤
-│ Architecture │ Auth & Master│ Dynamic Price│ Tech Offline │ Payments &   │ Admin ERP    │ Integration, │ UAT, Release │
-│ & UI/UX Base │ Data Catalog │ & Dispatch   │ Queue & Cam  │ Invoicing    │ Financials   │ Stress & Sec │ & Deployment │
-└──────────────┴──────────────┴──────────────┴──────────────┴──────────────┴──────────────┴──────────────┴──────────────┘
+┌───────────────────────────────┬───────────────────────────────┬───────────────────────────────┐
+│     Release 1: Core Ops       │   Release 2: Financial & ERP  │  Release 3: Business Auto     │
+│       (12 Weeks / 6 Sprints)  │      (6 Weeks / 3 Sprints)    │      (6 Weeks / 3 Sprints)    │
+├───────────────────────────────┼───────────────────────────────┼───────────────────────────────┤
+│ • Customer App (Catalog/Book) │ • Payment Gateway (Razorpay/Stripe)│ • AMC Contract & Auto Cron   │
+│ • Technician App (Room Cache) │ • Automated PDF Invoicing     │ • Intelligent AI Dispatching  │
+│ • Admin Booking & Tech Manager│ • Chemical Batch & Trunk Stock│ • Agency Multi-Branch Portal  │
+│ • Manual Dispatch Board       │ • Branch Expense & P&L Module │ • Customer WhatsApp Bot       │
+│ • Spring Security & FCM Push  │ • Digital Signatures & Photos │ • Advanced Inventory Barcodes │
+└───────────────────────────────┴───────────────────────────────┴───────────────────────────────┘
 ```
 
 ---
 
-## 💰 Investment & Commercial Summary
+## 💰 Investment Summary
 
 | Item | Details | Estimate |
 | :--- | :--- | :--- |
-| **MVP Development (Fixed Scope)** | Complete delivery of all 3 applications + Cloud Backend (16 Weeks) | **$00,000 – $00,000 USD**<br>*(₹00.0L – ₹00.0L INR)* |
-| **Estimated Cloud & API Hosting** | Firebase Blaze, Google Maps API, SMS/OTP Gateway, Domain/SSL | **$000 – $000 / month** |
+| **Full Product Development** | 3 Releases (Core Ops, Financials, Automation) across 24 Weeks | **$38,000 – $48,000 USD**<br>*(₹31.5L – ₹40.0L INR)* |
+| **Cloud Hosting & Database Run-Rate**| Spring Boot VPS, Managed PostgreSQL, Redis, RabbitMQ, SMS/OTP | **$85 – $220 / month** |
 | **Warranty & Post-Launch Support** | Critical bug fixes and deployment monitoring | **30 Days Included** |
 | **Annual Maintenance (Optional)** | SLA-backed support, security updates, and performance tuning | **15% of build cost / year** |
-
----
-
-## 🚀 Next Steps & Project Kickoff
-
-1. **Stakeholder Review & Sign-Off:** Review the [SRS Document](./docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md) and [Resource Plan](./docs/PROJECT_ESTIMATION_AND_RESOURCE_PLAN.md).
-2. **Third-Party Account Provisioning:** Setup Firebase Organization, Google Cloud Console, and Payment Gateway sandbox keys.
-3. **UI/UX Design Sprint Kickoff:** Finalize wireframes and brand design tokens for Customer and Admin applications.
 
 ---
 
