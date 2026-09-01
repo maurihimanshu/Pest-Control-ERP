@@ -39,6 +39,7 @@ All detailed specifications, architecture designs, resource requirements, and co
 | 🛡️ **Security Policy & Standards** | Zero-trust architecture, encryption in transit/rest, offline data security, anti-tampering, and responsible disclosure. | [**`SECURITY.md`**](./SECURITY.md) |
 | 📜 **Commercial License** | Proprietary and confidential enterprise software license terms and rights reservation. | [**`LICENSE`**](./LICENSE) |
 | 🤝 **Contributor Guide** | Developer setup, Git Flow branching, Android/React/Cloud coding standards, and PR guidelines. | [**`CONTRIBUTING.md`**](./CONTRIBUTING.md) |
+| 📜 **Code of Conduct** | Community pledge, inclusive professional standards, and enforcement guidelines. | [**`CODE_OF_CONDUCT.md`**](./CODE_OF_CONDUCT.md) |
 
 ---
 
