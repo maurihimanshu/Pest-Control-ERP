@@ -52,6 +52,27 @@ Incoming webhooks to `/api/v1/payments/webhooks/{gateway}` are validated before 
 * Every incoming webhook payload contains a gateway event ID (`event.id` or `payment.id`).
 * Spring Boot queries `payments` by `gateway_payment_id`. If the payment record is already in `PAID` status, the webhook returns `HTTP 200 OK` immediately without re-triggering invoices or duplicate events.
 
+### Payment Event Idempotency
+
+The `payment_events` table tracks every individual webhook event:
+```sql
+-- Prevents duplicate processing of same event (gateways retry delivery)
+CONSTRAINT uq_payment_event UNIQUE (provider, gateway_event_id)
+```
+
+A single payment generates MULTIPLE events (authorized, captured, failed, refunded). Each event is tracked separately. The payment_events table is the authoritative record of what the gateway reported.
+
+### Webhook Processing Flow
+
+1. Receive webhook → verify HMAC-SHA256 signature (reject if invalid)
+2. Extract provider + gateway_event_id
+3. INSERT INTO payment_events ... ON CONFLICT DO NOTHING → if 0 rows affected: already processed → HTTP 200
+4. BEGIN TRANSACTION: validate state transition → UPDATE payments → INSERT outbox_events(PaymentCompleted) → COMMIT
+5. Return HTTP 200
+
+### Outbox Pattern Integration
+On successful payment state transition, a `PaymentCompleted` event is inserted into `outbox_events` within the SAME PostgreSQL transaction that updates payment status. This guarantees that invoice generation, notification dispatch, and booking status update are reliably triggered even if the RabbitMQ broker is temporarily unavailable.
+
 ---
 
 ## 3. Cash on Delivery (COD) & Technician Field Collection

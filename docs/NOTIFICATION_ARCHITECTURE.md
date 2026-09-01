@@ -71,6 +71,15 @@ The notification subsystem is completely decoupled from synchronous request proc
 * **PDF Attachments:** Generated invoice PDFs are attached directly to completion emails.
 * **Transactional SMS:** Formatted according to regional regulatory templates (e.g., India DLT approved formats).
 
+## Notification Persistence
+
+Important notifications (booking confirmation, payment receipt, technician assignment) are persisted to the `notifications` table in PostgreSQL BEFORE being dispatched. This provides:
+- Delivery retry capability (if FCM/SMS fails, notification record exists for re-delivery)
+- Notification history for the customer app ("Your Notifications" feed)
+- Audit trail for regulatory/dispute purposes
+
+Ephemeral/low-value notifications (promotional, marketing) may be fire-and-forget without persistence.
+
 ---
 
 *Governed by event-driven asynchronous processing and reliable messaging standards.*

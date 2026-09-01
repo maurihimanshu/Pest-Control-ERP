@@ -17,10 +17,11 @@
 4. [Data Protection, Encryption & Privacy](#4-data-protection-encryption--privacy)
 5. [Server-Side Logic & Anti-Tampering Safeguards](#5-server-side-logic--anti-tampering-safeguards)
 6. [Offline Data Security on Field Devices](#6-offline-data-security-on-field-devices)
-7. [Payment Gateway & Financial Security](#7-payment-gateway--financial-security)
-8. [Audit Logging & Non-Repudiation](#8-audit-logging--non-repudiation)
-9. [Infrastructure Security & Rate Limiting](#9-infrastructure-security--rate-limiting)
-10. [Incident Response & Security SLAs](#10-incident-response--security-slas)
+7. [Encryption & Transport Security](#7-encryption--transport-security)
+8. [Payment Gateway & Financial Security](#8-payment-gateway--financial-security)
+9. [Audit Logging & Non-Repudiation](#9-audit-logging--non-repudiation)
+10. [Infrastructure Security & Rate Limiting](#10-infrastructure-security--rate-limiting)
+11. [Incident Response & Security SLAs](#11-incident-response--security-slas)
 
 ---
 
@@ -75,6 +76,12 @@ User authorization is governed by **Spring Security** evaluating user roles load
 * **Technician Authentication:** Mobile / Employee ID + PIN bound to the physical device UUID. If a device is reported lost or an employee is terminated, setting `users.is_active = false` immediately invalidates their session.
 * **Admin Web Authentication:** Corporate Email + Password enforced with **Multi-Factor Authentication (MFA)** and automated session timeout after 30 minutes of inactivity.
 
+**User Deactivation:**
+When a user is deactivated (is_active = false in PostgreSQL), all subsequent API requests are rejected at the Spring Security filter level, regardless of Firebase token validity. Firebase token revocation is a separate identity-management concern. The ERP does not rely on Firebase token expiry as the primary deactivation mechanism.
+
+**Firebase App Check (Play Integrity):**
+The Android apps use Firebase App Check with the Play Integrity API provider to verify that requests originate from genuine, unmodified app binaries. Note: App Check is a client-integrity attestation layer — it is NOT a replacement for Spring Security authorization or Firebase Authentication. A valid App Check token does not authorize ERP operations; that is handled by the full authentication/authorization pipeline.
+
 ---
 
 # 4. Data Protection, Encryption & Privacy
@@ -109,20 +116,40 @@ To prevent client-side parameter tampering (e.g., modifying service rates, apply
 Because the Technician Android App is offline-first:
 
 1. **Encrypted Local Storage:** Offline job data, service checklists, and customer signatures are cached in a sandboxed Room database encrypted with keys stored in the **Android Keystore System**.
-2. **Cryptographic Payload Signing:** Every offline event (`ARRIVED`, `MATERIALS_LOGGED`, `COMPLETED`) is stamped with a monotonic device timestamp and cryptographically hashed before being added to the sync queue.
+2. **Cryptographic Payload Signing:** Each offline operation is assigned a deterministic operation_id (UUID), authenticated user JWT, and device_id. The server validates identity, enforces idempotency, and maintains a complete audit trail. Cryptographic payload signing is deferred to a future security hardening phase.
 3. **Media Sandbox:** Photos taken via CameraX are written directly to the application-private directory (`Context.getExternalFilesDir()`) and deleted from the local cache immediately upon successful Object Storage sync.
 
 ---
 
-# 7. Payment Gateway & Financial Security
+# 7. Encryption & Transport Security
+
+**Transport Security (TLS):**
+All API communication uses TLS 1.2/1.3 enforced at the Nginx load balancer. Certificate rotation is automated via Let's Encrypt or equivalent.
+
+**Data-at-Rest Encryption:**
+PostgreSQL data-at-rest encryption is managed at the infrastructure/cloud provider level. Object Storage (S3/GCS) uses server-side encryption (SSE). Android local Room database uses SQLCipher with keys stored in the Android Keystore System.
+
+**Important Terminology Clarification:**
+This system does NOT implement End-to-End Encryption (E2EE). E2EE would require that encryption keys are held exclusively by the communicating endpoints and the server cannot decrypt the content. This ERP system intentionally processes business records server-side (pricing, booking state, inventory, payments) — this is correct for an ERP and is NOT a security gap.
+
+The correct description is:
+- TLS protects data in transit between clients and the backend
+- Cloud/database encryption protects data at rest
+- Android Keystore protects device-local data
+
+---
+
+# 8. Payment Gateway & Financial Security
 
 1. **PCI-DSS Compliance:** The platform does not store or process raw credit/debit card numbers, CVVs, or banking credentials. All payments use tokenized gateway SDKs (Razorpay / Stripe / Cashfree).
 2. **Webhook Signature Verification:** Payment confirmation webhooks require HMAC-SHA256 signature verification matching the gateway secret before updating any booking status.
 3. **Idempotency Safeguards:** Every payment event is checked against unique `gateway_payment_id` constraints in PostgreSQL to guarantee transactions cannot be double-credited or replayed.
+**Payment Event Idempotency:**
+Each payment webhook event is tracked in the `payment_events` table with a UNIQUE constraint on `(provider, gateway_event_id)`. This ensures that multiple webhook deliveries of the same event (which payment gateways routinely retry) are processed exactly once. A single payment may generate multiple events (authorized, captured, failed, refunded) — these are all tracked separately.
 
 ---
 
-# 8. Audit Logging & Non-Repudiation
+# 9. Audit Logging & Non-Repudiation
 
 An immutable, append-only audit trail (`audit_logs`) in PostgreSQL records all administrative and operational actions:
 
@@ -135,7 +162,7 @@ Each audit record captures: `timestamp`, `actorId`, `actorRole`, `action`, `enti
 
 ---
 
-# 9. Infrastructure Security & Rate Limiting
+# 10. Infrastructure Security & Rate Limiting
 
 * **Redis Rate Limiter:** Protects public endpoints (such as OTP requests and login) against abuse using a sliding window algorithm in Redis.
 * **CORS Policies:** Spring Security strictly enforces Cross-Origin Resource Sharing (CORS) whitelisting only the official Admin Web domain.
@@ -143,7 +170,7 @@ Each audit record captures: `timestamp`, `actorId`, `actorRole`, `action`, `enti
 
 ---
 
-# 10. Incident Response & Security SLAs
+# 11. Incident Response & Security SLAs
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐

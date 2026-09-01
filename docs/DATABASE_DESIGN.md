@@ -1,10 +1,12 @@
 # Database Design & PostgreSQL Schema Specification
 ## Pest Control Enterprise Resource Planning (ERP) Platform
 
-**Document Version:** 1.0.0  
+**Document Version:** 2.0.0  
 **Database Engine:** PostgreSQL 16.x  
 **Migration Tool:** Flyway 10.x  
 **Date:** September 2026  
+
+> **Architecture Reference:** See `docs/ARCHITECTURE.md` for the canonical system architecture, `docs/DOMAIN_MODEL.md` for entity relationships and state machines, and `docs/CONCURRENCY_AND_IDEMPOTENCY.md` for transactional concurrency specifications.
 
 ---
 
@@ -24,14 +26,14 @@ PostgreSQL 16 serves as the authoritative, transactional **System-of-Record (SoR
 
 ```text
  ┌───────────────┐        ┌───────────────┐        ┌───────────────┐
- │   customers   │───1:N──│   bookings    │───1:N──│ booking_items │
+ │   customers   │───1:N──│   bookings    │───1:N─ │ booking_items │
  └───────┬───────┘        └───────┬───────┘        └───────────────┘
          │ 1:N                    │ 1:N
  ┌───────▼───────┐        ┌───────▼───────┐        ┌───────────────┐
  │customer_addrs │        │  work_orders  │───1:N──│service_visits │
  └───────────────┘        └───────┬───────┘        └───────┬───────┘
                                   │                        │ 1:N
- ┌───────────────┐                │ 1:1            ┌───────▼───────────────┐
+ ┌───────────────┐                │ 1:N            ┌───────▼───────────────┐
  │   employees   │◄───────────────┘                │service_material_usage │
  └───────┬───────┘                                 └───────┬───────────────┘
          │ 1:N                                             │ N:1
@@ -218,7 +220,7 @@ CREATE TABLE bookings (
     customer_address_id UUID NOT NULL REFERENCES customer_addresses(id) ON DELETE RESTRICT,
     agency_id UUID REFERENCES agencies(id) ON DELETE SET NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'CONFIRMED', 'CANCELLED', 'CLOSED'
-    payment_status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'PAID', 'PARTIAL', 'REFUNDED'
+    payment_status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- PaymentStatus: PENDING, AUTHORIZED, PAID, PARTIAL, FAILED, REFUNDED, PARTIALLY_REFUNDED
     scheduled_date DATE NOT NULL,
     scheduled_time_slot VARCHAR(50) NOT NULL,
     subtotal_amount NUMERIC(12, 2) NOT NULL,
@@ -269,7 +271,9 @@ CREATE TABLE service_visits (
     visit_number VARCHAR(50) UNIQUE NOT NULL, -- 'SV-2026-00001'
     work_order_id UUID NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
     primary_employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
-    status VARCHAR(50) NOT NULL DEFAULT 'SCHEDULED', -- 'SCHEDULED', 'ACCEPTED', 'ON_THE_WAY', 'ARRIVED', 'STARTED', 'COMPLETED'
+    status VARCHAR(30) NOT NULL DEFAULT 'SCHEDULED',
+    -- ServiceVisitStatus: SCHEDULED, ON_THE_WAY, ARRIVED, STARTED, COMPLETED, CANCELLED, FAILED
+    -- NOTE: This is a SEPARATE state machine from WorkOrderStatus
     scheduled_start_time TIMESTAMP WITH TIME ZONE NOT NULL,
     actual_arrival_time TIMESTAMP WITH TIME ZONE,
     actual_start_time TIMESTAMP WITH TIME ZONE,
@@ -313,7 +317,8 @@ CREATE TABLE chemical_batches (
     total_quantity_received NUMERIC(10, 2) NOT NULL,
     current_quantity_available NUMERIC(10, 2) NOT NULL,
     cost_per_unit NUMERIC(10, 2) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_batch_qty_nonneg CHECK (current_quantity_available >= 0)
 );
 
 CREATE TABLE service_material_usage (
@@ -412,18 +417,22 @@ CREATE TABLE amc_schedules (
 ```sql
 CREATE TABLE file_metadata (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    entity_type VARCHAR(100) NOT NULL, -- 'SERVICE_VISIT_PHOTO', 'CUSTOMER_SIGNATURE', 'INVOICE_PDF', 'EXPENSE_RECEIPT'
+    agency_id UUID REFERENCES agencies(id),
+    entity_type VARCHAR(100) NOT NULL,
     entity_id UUID NOT NULL,
-    storage_provider VARCHAR(50) NOT NULL DEFAULT 'S3', -- 'S3', 'FIREBASE_STORAGE', 'GCS'
-    storage_path VARCHAR(500) NOT NULL,
-    file_name VARCHAR(255) NOT NULL,
-    mime_type VARCHAR(100) NOT NULL,
-    file_size_bytes BIGINT NOT NULL,
+    file_purpose VARCHAR(100) NOT NULL,  -- 'BEFORE_PHOTO', 'AFTER_PHOTO', 'SIGNATURE', 'INVOICE_PDF', 'RECEIPT'
+    storage_provider VARCHAR(50) NOT NULL,  -- 'AWS_S3', 'GCS', 'CLOUDFLARE_R2'
+    storage_key VARCHAR(1000) NOT NULL,
+    file_name VARCHAR(500),
+    mime_type VARCHAR(100),
+    file_size_bytes BIGINT,
+    checksum_sha256 VARCHAR(64),
     uploaded_by UUID REFERENCES users(id),
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    access_policy VARCHAR(50) NOT NULL DEFAULT 'PRIVATE',  -- 'PRIVATE', 'AGENCY'
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
 CREATE INDEX idx_file_metadata_entity ON file_metadata(entity_type, entity_id);
+CREATE INDEX idx_file_metadata_agency ON file_metadata(agency_id);
 
 CREATE TABLE audit_logs (
     id BIGSERIAL PRIMARY KEY,
@@ -442,6 +451,81 @@ CREATE TABLE audit_logs (
 CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX idx_audit_logs_actor ON audit_logs(actor_id);
 CREATE INDEX idx_audit_logs_created ON audit_logs(created_at);
+
+-- Availability Slots (for booking slot concurrency)
+CREATE TABLE availability_slots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agency_id UUID REFERENCES agencies(id) ON DELETE RESTRICT,
+    employee_id UUID REFERENCES employees(id) ON DELETE RESTRICT,
+    service_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    capacity INTEGER NOT NULL DEFAULT 1,
+    booked_count INTEGER NOT NULL DEFAULT 0,
+    is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_booked_count_nonneg CHECK (booked_count >= 0),
+    CONSTRAINT chk_booked_not_exceed_capacity CHECK (booked_count <= capacity)
+);
+CREATE UNIQUE INDEX uq_slot_employee_time
+    ON availability_slots(employee_id, service_date, start_time)
+    WHERE is_blocked = FALSE;
+CREATE INDEX idx_availability_date ON availability_slots(agency_id, service_date);
+
+-- Coupon Redemptions (per-customer coupon usage tracking)
+CREATE TABLE coupon_redemptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    coupon_id UUID NOT NULL REFERENCES coupons(id) ON DELETE RESTRICT,
+    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+    booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE RESTRICT,
+    redeemed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_coupon_per_customer UNIQUE (coupon_id, customer_id)
+);
+
+-- Payment Events (idempotent webhook event tracking)
+CREATE TABLE payment_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payment_id UUID REFERENCES payments(id) ON DELETE RESTRICT,
+    provider VARCHAR(50) NOT NULL,
+    gateway_event_id VARCHAR(255) NOT NULL,
+    gateway_payment_id VARCHAR(255),
+    event_type VARCHAR(100) NOT NULL,
+    payload_hash VARCHAR(64),
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMPTZ,
+    processing_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    CONSTRAINT uq_payment_event UNIQUE (provider, gateway_event_id)
+);
+CREATE INDEX idx_payment_events_payment_id ON payment_events(payment_id);
+
+-- Outbox Events (reliable domain event publication)
+CREATE TABLE outbox_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_type VARCHAR(100) NOT NULL,
+    aggregate_type VARCHAR(100) NOT NULL,
+    aggregate_id UUID NOT NULL,
+    payload JSONB NOT NULL,
+    payload_version INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    published_at TIMESTAMPTZ,
+    publication_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    retry_count INT NOT NULL DEFAULT 0,
+    last_error TEXT
+);
+CREATE INDEX idx_outbox_pending ON outbox_events(publication_status, created_at)
+    WHERE publication_status = 'PENDING';
+
+-- Idempotency Keys (API request deduplication)
+CREATE TABLE idempotency_keys (
+    key VARCHAR(255) PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id),
+    request_path VARCHAR(500) NOT NULL,
+    response_status INT NOT NULL,
+    response_body JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours'
+);
+CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
 ```
 
 ---

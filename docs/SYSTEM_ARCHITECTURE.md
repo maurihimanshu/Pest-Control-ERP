@@ -52,14 +52,18 @@ The Pest Control ERP is an enterprise-grade field service management and operati
                         └─────────┬───────────────┬───────────────┬────────┘
                                   │               │               │
                  ┌────────────────┴────┐   ┌──────┴──────┐  ┌─────┴──────────────┐
-                 ▼                     ▼   ▼             ▼  ▼                    ▼
-        ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-        │    PostgreSQL    │  │      Redis       │  │     RabbitMQ     │  │  Object Storage  │
-        │ Primary Relational│  │ Cache, Locks &   │  │ Async Events &   │  │ S3 / GCS / Cloud │
-        │    Database      │  │  Rate Limiting   │  │ Task Decoupling  │  │ (PDFs, Media)    │
-        └──────────────────┘  └──────────────────┘  └──────────────────┘  └──────────────────┘
-                                       │                     │
-                                       ▼                     ▼
+                  ▼                     ▼   ▼             ▼  ▼                    ▼
+         ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+         │    PostgreSQL    │  │      Redis       │  │     RabbitMQ     │  │  Object Storage  │
+         │ Primary Relational│  │ Cache, Locks &   │  │ Async Events &   │  │ S3 / GCS / Cloud │
+         │    Database      │  │  Rate Limiting   │  │ Task Decoupling  │  │ (PDFs, Media)    │
+         └────────┬─────────┘  └──────────────────┘  └────────▲─────────┘  └──────────────────┘
+                  │                                           │
+                  │   ┌──────────────────────────────────┐    │
+                  └──►│ outbox_events → Outbox Publisher │────┘
+                      └──────────────────────────────────┘
+                                        │                     │
+                                        ▼                     ▼
                         ┌──────────────────────────────────────────────────┐
                         │            External Supporting Services          │
                         ├──────────────────────────────────────────────────┤
@@ -203,3 +207,16 @@ When critical state mutations occur in Spring Boot, transactional events are pub
 ---
 
 *This architecture document governs all module designs, database schemas, and API contracts.*
+
+## Implementation Status
+
+| Component | Status |
+|:---|:---|
+| Architecture Documentation | ✅ Complete |
+| Spring Boot Backend | 🔲 Not Yet Implemented |
+| PostgreSQL Schema (Flyway) | 🔲 Not Yet Implemented |
+| Customer Android App | 🔲 Not Yet Implemented |
+| Technician Android App | 🔲 Not Yet Implemented |
+| Admin React Web App | 🔲 Not Yet Implemented |
+
+This repository serves as the complete architecture baseline and implementation specification.

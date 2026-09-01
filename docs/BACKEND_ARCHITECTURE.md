@@ -103,6 +103,13 @@ com.pestcontrol.modules.bookings/
 └── validation/        # Custom bean validation constraints (@ValidBookingSchedule)
 ```
 
+## Module Boundary Rules
+
+1. **No cross-module @Repository injection**: Module A cannot inject Module B's @Repository directly. Inter-module communication goes through @Service interfaces only.
+2. **No circular dependencies**: modules are organized in a dependency hierarchy — auth, users → customers, employees, agencies → services, pricing → bookings, scheduling → dispatch, payments, invoices → inventory, amc, notifications, reports, audit
+3. **Shared domain objects**: DTOs shared between modules go in a `shared/` package. JPA entities are owned by their module.
+4. **Event-based decoupling**: when modules need to react to each other's state changes, use RabbitMQ domain events via the Outbox pattern rather than direct service-to-service calls.
+
 ---
 
 ## 4. Cross-Cutting Infrastructure Components
@@ -138,6 +145,16 @@ com.pestcontrol.modules.bookings/
 * **Reliability Features:**
   * Manual ACK mode enabled (`AcknowledgeMode.MANUAL`).
   * Dead Letter Exchange (`erp.dlx.topic`) for failed events after 3 exponential backoff retries.
+
+## Outbox Pattern Integration
+
+Every domain event (BookingConfirmed, PaymentCompleted, ServiceCompleted, etc.) is published via the Outbox pattern:
+1. Business transaction writes to business tables + outbox_events IN THE SAME TRANSACTION
+2. OutboxPublisher @Scheduled job polls outbox_events WHERE status = 'PENDING'
+3. For each pending event: publish to RabbitMQ exchange → mark as 'PUBLISHED'
+4. On publish failure: increment retry_count, update last_error, retry on next poll
+
+This guarantees at-least-once delivery to RabbitMQ without distributed 2PC.
 
 ---
 

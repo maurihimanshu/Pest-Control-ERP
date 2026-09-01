@@ -50,7 +50,14 @@ This document outlines the **resource allocation, team composition, manpower ski
 | Multi-Channel Notification Dispatcher (FCM, SMS, Email Thymeleaf) | Medium | 32 hrs |
 | Daily Financial Rollup Aggregator & Reporting Endpoints | Medium | 36 hrs |
 | Springdoc OpenAPI (Swagger UI) Configuration & Actuator Metrics | Low | 20 hrs |
-| **Subtotal (Backend & Infrastructure)** | | **566 Hours** |
+| Outbox Pattern implementation + publisher job | High | 40 hrs |
+| payment_events table + webhook idempotency | Medium | 24 hrs |
+| availability_slots table + slot locking | High | 32 hrs |
+| coupon_redemptions + transactional coupon validation | Medium | 24 hrs |
+| file_metadata + pre-signed URL authorization | Medium | 24 hrs |
+| idempotency_keys table + API deduplication filter | Medium | 24 hrs |
+| Conflict records for offline sync | Medium | 24 hrs |
+| **Subtotal (Backend & Infrastructure)** | | **758 Hours** |
 
 ---
 
@@ -144,5 +151,7 @@ This document outlines the **resource allocation, team composition, manpower ski
 ```
 
 ---
+
+> **Note:** This estimation covers the complete implementation from the current Architecture Baseline state. No application source code has been implemented. The documentation and agent skills system represent the pre-implementation design phase.
 
 *Governed by enterprise software estimation frameworks and agile delivery benchmarks.*

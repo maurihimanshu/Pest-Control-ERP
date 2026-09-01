@@ -63,6 +63,11 @@ All detailed specifications, architecture designs, database DDL schemas, API con
 
 | Document | Description | Direct Link |
 | :--- | :--- | :--- |
+| 🏛️ **Architecture (Canonical)** | Primary architectural reference — all modules, boundaries, decisions. | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) |
+| 🗂️ **Domain Model (Canonical)** | Entities, aggregates, state machines, invariants, business rules. | [`docs/DOMAIN_MODEL.md`](./docs/DOMAIN_MODEL.md) |
+| 🔐 **RBAC & Permissions** | Single source of truth for all roles and permissions. | [`docs/RBAC_AND_PERMISSIONS.md`](./docs/RBAC_AND_PERMISSIONS.md) |
+| ⚛️ **Concurrency & Idempotency** | Slot locking, inventory, payment webhook, offline sync, outbox. | [`docs/CONCURRENCY_AND_IDEMPOTENCY.md`](./docs/CONCURRENCY_AND_IDEMPOTENCY.md) |
+| 📋 **Architecture Decisions** | Formal ADRs for major architectural decisions. | [`docs/adr/`](./docs/adr/) |
 | 📋 **Software Requirements Specification (SRS)** | Complete module-by-module functional requirements, user roles, 3-tier domain model, and 3-release scope. | [**`docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md`**](./docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md) |
 | 🏛️ **System Architecture** | High-level C4 container architecture, modular monolith design, technology matrix, and decoupled event pipelines. | [**`docs/SYSTEM_ARCHITECTURE.md`**](./docs/SYSTEM_ARCHITECTURE.md) |
 | ⚙️ **Backend Architecture** | Spring Boot 3.3, Java 21, Maven package structure, Spring Security filter, Flyway migrations, Redis, and RabbitMQ. | [**`docs/BACKEND_ARCHITECTURE.md`**](./docs/BACKEND_ARCHITECTURE.md) |
@@ -129,6 +134,25 @@ All detailed specifications, architecture designs, database DDL schemas, API con
 | **Cloud Hosting & Database Run-Rate**| Spring Boot VPS, Managed PostgreSQL, Redis, RabbitMQ, SMS/OTP | **$85 – $220 / month** |
 | **Warranty & Post-Launch Support** | Critical bug fixes and deployment monitoring | **30 Days Included** |
 | **Annual Maintenance (Optional)** | SLA-backed support, security updates, and performance tuning | **15% of build cost / year** |
+
+---
+
+## 📊 Implementation Status
+
+> **Current Phase: Architecture & Documentation Baseline**
+
+| Component | Status |
+|:---|:---|
+| Architecture Documentation | ✅ Complete |
+| Domain Model & SRS | ✅ Complete |
+| API Specification | ✅ Complete |
+| Database Design | ✅ Complete |
+| Agent Skills System | ✅ Complete |
+| Spring Boot Backend | 🔲 Not Yet Implemented |
+| PostgreSQL Schema / Flyway | 🔲 Not Yet Implemented |
+| Customer Android App | 🔲 Not Yet Implemented |
+| Technician Android App | 🔲 Not Yet Implemented |
+| Admin React Web App | 🔲 Not Yet Implemented |
 
 ---
 

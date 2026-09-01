@@ -63,6 +63,15 @@ HTTP Request (with Authorization: Bearer <token>)
 [ Method Security: @PreAuthorize ]
 ```
 
+## User Deactivation & Active Status
+
+Firebase token validity does NOT determine ERP access. When a user's `is_active` field in PostgreSQL is set to `FALSE`:
+1. The FirebaseAuthenticationFilter still validates the token signature
+2. After loading the user record from PostgreSQL, the filter checks `is_active`
+3. If `is_active = FALSE`, the filter returns HTTP 401 regardless of token validity
+4. Firebase token revocation is a separate identity-management concern
+5. There is no race window where a deactivated user can access the ERP (unlike token-only approaches which require waiting for token expiry)
+
 ---
 
 ## 3. Role-Based Access Control (RBAC) Matrix
@@ -96,6 +105,13 @@ HTTP Request (with Authorization: Bearer <token>)
 | `EXPENSE_LOG_BRANCH` | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ |
 | `FINANCIAL_REPORT_READ` | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
 | `AUDIT_LOG_READ` | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+## Agency/Tenant Scope Enforcement
+
+Every authenticated user has an agency_id loaded from PostgreSQL (for non-CUSTOMER, non-SUPER_ADMIN roles). This is extracted in the FirebaseAuthenticationFilter and stored in the SecurityContext. Service layer methods extract agency_id from the authentication principal and include it in all queries for agency-scoped resources. Agents cannot access another agency's resources by modifying the URL.
+
+See `docs/RBAC_AND_PERMISSIONS.md` for the canonical permissions matrix.
+See `docs/ARCHITECTURE.md` for the full authentication/authorization flow.
 
 ---
 

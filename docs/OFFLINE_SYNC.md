@@ -18,6 +18,17 @@ Pest control technicians operate in basements, industrial warehouses, sub-ground
 3. **Idempotency & Zero Duplicate Mutations:** Every local event carries a client-generated UUID `idempotencyKey` and monotonic sequence number.
 4. **Deterministic Conflict Resolution:** Explicit, rule-based conflict handling ensures field physical evidence is never silently discarded.
 
+### Security without Cryptographic Payload Signing (V1):
+Offline operations are secured through:
+- Firebase JWT authentication (user identity cryptographically verified by Firebase)
+- operation_id UUID idempotency (prevents replay of individual operations)
+- device_id registration (device linked to employee account in PostgreSQL)
+- local_sequence ordering (operations processed in correct order)
+- Server-side state validation (backend is authoritative — stale client operations rejected)
+- Complete audit trail in audit_logs
+
+Cryptographic payload signing (e.g., Android Keystore Ed25519 signatures on each operation payload) is documented in ADR-006 as a future security hardening option for Phase 2.
+
 ---
 
 ## 2. Technician Mobile Offline Architecture
@@ -71,21 +82,20 @@ Pest control technicians operate in basements, industrial warehouses, sub-ground
 
 When the technician executes an action offline, it is written immediately to `offline_action_queue`:
 
-```java
-@Entity(tableName = "offline_action_queue")
-public class OfflineActionEntity {
-    @PrimaryKey
-    @NonNull
-    public String actionId; // UUID generated on device
-
-    public String visitId;
-    public String actionType; // 'ARRIVE', 'START', 'LOG_MATERIALS', 'COMPLETE'
-    public String payloadJson; // Serialized request parameters
-    public long clientTimestamp; // Monotonic device timestamp
-    public int retryCount;
-    public String syncStatus; // 'PENDING', 'UPLOADING_MEDIA', 'SYNCED', 'FAILED'
-    public String errorMessage;
-}
+```text
+Operation Queue Fields:
+- operation_id UUID (primary key for idempotency — generated on device)
+- device_id VARCHAR (registered device, linked to employee in PostgreSQL)
+- event_id UUID (same as operation_id for atomically-created operations)
+- local_sequence BIGINT (monotonically increasing per device — for ordering)
+- client_created_at TIMESTAMPTZ (device clock — informational only, NOT authoritative timestamp)
+- server_received_at TIMESTAMPTZ (set by server — authoritative timestamp)
+- operation_type VARCHAR (VISIT_ARRIVED, VISIT_STARTED, MATERIALS_LOGGED, VISIT_COMPLETED, PHOTO_UPLOADED)
+- payload JSONB
+- payload_version INT (for schema evolution)
+- retry_count INT
+- sync_status VARCHAR (PENDING, SYNCING, SYNCED, FAILED, CONFLICT)
+- last_sync_error TEXT
 ```
 
 ---
@@ -94,27 +104,21 @@ public class OfflineActionEntity {
 
 When the mobile app synchronizes with the server, conflicts between offline actions and concurrent online administrative changes are resolved via deterministic rules:
 
-```text
-┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                Conflict Resolution Rules Matrix                                 │
-├───────────────────────────────┬─────────────────────────┬──────────────────────┬─────────────────┤
-│ Field Action (Offline)        │ Server State (Online)   │ Resolution Strategy  │ Final State     │
-├───────────────────────────────┼─────────────────────────┼──────────────────────┼─────────────────┤
-│ Technician marks `COMPLETED`  │ Admin marked `CANCELLED`│ Physical Overrule    │ Visit marked    │
-│ with photos & chemicals       │ while tech was offline  │ Server accepts visit │ `COMPLETED`;    │
-│                               │                         │ & logs audit dispute │ Admin notified  │
-├───────────────────────────────┼─────────────────────────┼──────────────────────┼─────────────────┤
-│ Technician marks `COMPLETED`  │ Work Order reassigned   │ Original Tech Credit │ Visit linked to │
-│ on old device                 │ to another technician   │ Service recorded for │ original tech;  │
-│                               │                         │ acting technician    │ 2nd tech aborted│
-├───────────────────────────────┼─────────────────────────┼──────────────────────┼─────────────────┤
-│ Technician logs chemical      │ Chemical batch expired  │ Accept with Warning  │ Usage recorded; │
-│ usage from allocated batch    │ in server inventory     │ Inventory deducted;  │ Warning flagged │
-│                               │                         │ Quality alert raised │ to Branch Mgr   │
-├───────────────────────────────┼─────────────────────────┼──────────────────────┼─────────────────┤
-│ Retried sync with identical   │ Already processed by    │ Idempotent Acknowledge│ HTTP 200 OK     │
-│ `actionId` UUID               │ server on previous run  │ Returns cached result│ No duplicate op │
-└───────────────────────────────┴─────────────────────────┴──────────────────────┴─────────────────┘
+### Conflict Resolution Policy
+
+**Principle:** Offline synchronization must NEVER silently override a newer authoritative administrative or financial decision.
+
+| Conflict Scenario | Default Behavior | Authorization Required | Audit |
+|:---|:---|:---|:---|
+| Offline COMPLETED arrives after admin CANCELLED | Create conflict record, notify DISPATCHER/AGENCY_MANAGER, DO NOT override cancellation | DISPATCHER or ADMIN to resolve | audit_logs + conflict_record |
+| Offline COMPLETED with chemical usage after batch marked expired | Reject chemical deduction, flag for supervisor review | AGENCY_MANAGER to approve retroactive adjustment | audit_logs |
+| Offline COMPLETED after technician reassignment | Create conflict record, original technician's completion flagged | DISPATCHER to attribute credit | audit_logs |
+| Duplicate operation_id submitted | Return previously computed result, no re-processing | None | idempotency log |
+
+**Conflict Record:**
+```sql
+-- Stored as a support_ticket type 'SYNC_CONFLICT' or separate conflict_records table
+-- Contains: original_server_state, submitted_offline_payload, conflict_type, created_at, resolved_at, resolved_by, resolution
 ```
 
 ---

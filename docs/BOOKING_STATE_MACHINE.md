@@ -75,53 +75,37 @@ To prevent tight coupling and accommodate multi-visit treatments, warranty revis
 | `CONFIRMED` | `CANCELLED` | Customer / Admin cancels | Customer / Admin | Cancels Work Orders, triggers refund if paid |
 | `CONFIRMED` | `CLOSED` | Final Service Visit completed | System | Generates invoice, sends review prompt |
 
+> **CONFIRMED + PENDING payment is valid:** For COD and deferred-payment bookings, CONFIRMED status means the business has accepted the booking and locked the slot. paymentStatus = PENDING is acceptable and expected until COD collection at service completion.
+>
+> **Prepaid bookings:** CONFIRMED is only set after backend-verified payment authorization. The confirmation flow is determined by the booking_type field.
+
 ---
 
-## 3. Field Service Visit State Machine
+## 3. Service Visit Status State Machine (ServiceVisitStatus)
 
-The Service Visit tracks physical technician execution on the ground:
+Owned by: ServiceVisit entity (child of WorkOrder)
+One WorkOrder may have MULTIPLE ServiceVisits (1:N cardinality).
 
-```text
-          ┌─────────────┐
-          │  SCHEDULED  │
-          └──────┬──────┘
-                 │ (Technician accepts assignment)
-                 ▼
-          ┌─────────────┐         ┌────────────┐
-          │  ACCEPTED   │────────►│  REJECTED  │──► (Triggers Re-dispatch)
-          └──────┬──────┘         └────────────┘
-                 │ (Technician clicks 'Start Navigation')
-                 ▼
-          ┌─────────────┐
-          │ ON_THE_WAY  │
-          └──────┬──────┘
-                 │ (Technician arrives at customer GPS)
-                 ▼
-          ┌─────────────┐
-          │   ARRIVED   │
-          └──────┬──────┘
-                 │ (Safety checklist verified & treatment started)
-                 ▼
-          ┌─────────────┐
-          │   STARTED   │
-          └──────┬──────┘
-                 │ (Materials logged, photos captured, customer signs)
-                 ▼
-          ┌─────────────┐
-          │  COMPLETED  │
-          └─────────────┘
-```
+| From Status | To Status | Actor | API Endpoint | Trigger |
+|:---|:---|:---|:---|:---|
+| (created) | SCHEDULED | System | POST /api/v1/dispatch/work-orders/{id}/schedule-visit | WorkOrder assigned |
+| SCHEDULED | ON_THE_WAY | Technician | POST /api/v1/dispatch/visits/{id}/on-the-way | Tech starts traveling |
+| ON_THE_WAY | ARRIVED | Technician | POST /api/v1/dispatch/visits/{id}/arrived | Tech at location |
+| ARRIVED | STARTED | Technician | POST /api/v1/dispatch/visits/{id}/start | Service begins |
+| STARTED | COMPLETED | Technician | POST /api/v1/dispatch/visits/{id}/complete | All checklist done |
+| SCHEDULED | CANCELLED | DISPATCHER/ADMIN | POST /api/v1/dispatch/visits/{id}/cancel | Before visit starts |
+| STARTED | FAILED | Technician/ADMIN | POST /api/v1/dispatch/visits/{id}/fail | Cannot complete visit |
 
-### Transition Matrix:
+### FAILED vs CANCELLED
+- FAILED: Service was attempted but could not be completed (customer not home, equipment failure, access denied). Creates a NEW ServiceVisit on the SAME WorkOrder for rescheduling.
+- CANCELLED: Visit cancelled before it started. May trigger booking reschedule or work order cancellation.
 
-| Current State | Target State | Preconditions | Side Effects |
-| :--- | :--- | :--- | :--- |
-| `SCHEDULED` | `ACCEPTED` | Assigned technician clicks Accept in App | Emits `visit.accepted`, updates Work Order |
-| `SCHEDULED` | `REJECTED` | Technician rejects with mandatory reason | Emits `visit.rejected`, alerts Dispatch Desk |
-| `ACCEPTED` | `ON_THE_WAY` | Technician departs for location | Sends FCM alert to Customer: *"Technician en route"* |
-| `ON_THE_WAY` | `ARRIVED` | Device GPS within 200m of customer pin | Captures `actual_arrival_time` |
-| `ARRIVED` | `STARTED` | Pre-service checklist confirmed | Sets `actual_start_time` |
-| `STARTED` | `COMPLETED` | Photos uploaded, chemicals logged, signature saved | Generates Invoice PDF, closes Work Order |
+### Side Effects of COMPLETED
+1. ServiceCompleted event → outbox_events
+2. Inventory deduction (transactional, PostgreSQL FOR UPDATE)
+3. COGS calculation
+4. Triggers InvoiceService (if payment complete) or marks booking IN_PROGRESS
+5. audit_log entry
 
 ---
 

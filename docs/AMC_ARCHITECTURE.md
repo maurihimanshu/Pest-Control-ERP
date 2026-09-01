@@ -63,12 +63,33 @@ public class AmcVisitGeneratorTask {
 }
 ```
 
+## Cron Idempotency
+
+The daily AMC scheduling job is idempotent:
+```sql
+-- Prevents duplicate work order generation for same AMC schedule
+CREATE UNIQUE INDEX uq_amc_schedule_date 
+    ON amc_schedules(contract_id, scheduled_date);
+```
+
+The Spring @Scheduled job uses INSERT ... ON CONFLICT DO NOTHING. Running the job multiple times for the same day is safe.
+
+## Conflict with Offline Sync
+If a technician completes an AMC visit offline and later a second visit is auto-generated for the same slot by the scheduler:
+1. Server detects conflict on sync
+2. Auto-generated visit is marked DUPLICATE and suppressed
+3. DISPATCHER notified
+4. Audit logged
+
 ---
 
 ## 3. Contract Renewal & Expiry Engine
 
 * **30-Day Renewal Window:** 30 days prior to `end_date`, the system emits `amc.renewal_due`, triggering an in-app renewal banner on the Customer App and a WhatsApp renewal quote.
 * **Auto-Renewal Workflows:** If approved, a new contract is generated, linking the service history for unbroken warranty coverage.
+
+## Timezone Handling
+All scheduled dates stored in UTC. UI displays in local timezone (Asia/Kolkata for India deployments). Spring @Scheduled cron runs at 01:00 UTC daily. Customer-facing visit dates formatted by the frontend based on user locale.
 
 ---
 

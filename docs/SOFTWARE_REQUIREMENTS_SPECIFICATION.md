@@ -205,12 +205,14 @@ PostgreSQL 16 is the authoritative **System-of-Record (SoR)**. Foreign keys, con
 │ `services`                │ id, category_id (FK), title, pricing_model, base_price, warranty│
 │ `pricing_rules` / `tiers` │ id, service_id (FK), tier_name, unit_min, unit_max, unit_price  │
 │ `coupons`                 │ code (PK), discount_type, discount_value, min_amount, valid_to  │
+│ `coupon_redemptions`      │ id, coupon_id (FK), customer_id (FK), booking_id (FK), redeemed_at  │
 │ `bookings`                │ id, booking_number, customer_id (FK), address_id (FK), status   │
 │ `booking_items`           │ id, booking_id (FK), service_id (FK), pricing_tier, line_total  │
 │ `work_orders`             │ id, work_order_number, booking_id (FK), assigned_employee_id(FK)│
 │ `service_visits`          │ id, visit_number, work_order_id (FK), primary_employee_id (FK)  │
 │ `booking_events`          │ id, booking_id (FK), event_type, actor_id (FK), timestamp       │
 │ `payments`                │ id, payment_number, booking_id (FK), method, amount, status     │
+│ `payment_events`          │ id, payment_id (FK), provider, gateway_event_id UNIQUE, event_type, processing_status │
 │ `payment_transactions`    │ id, payment_id (FK), gateway_txn_id, amount, status, payload_json│
 │ `invoices`                │ id, invoice_number, booking_id (FK), customer_id (FK), pdf_path │
 │ `expenses`                │ id, agency_id (FK), category, amount, expense_date, receipt_url │
@@ -224,7 +226,12 @@ PostgreSQL 16 is the authoritative **System-of-Record (SoR)**. Foreign keys, con
 │ `notifications`           │ id, user_id (FK), channel, title, body, status, sent_at         │
 │ `file_metadata`           │ id, entity_type, entity_id, storage_provider, storage_path, size│
 │ `audit_logs`              │ id (BIGSERIAL), actor_id (FK), action, entity_type, old/new json│
+│ `outbox_events`           │ id, event_type, aggregate_type, aggregate_id, payload, publication_status │
+│ `idempotency_keys`        │ key PK, user_id, request_path, response_status, response_body, expires_at│
+│ `availability_slots`      │ id, service_date, start_time, end_time, employee_id, capacity, booked_count│
 └───────────────────────────┴─────────────────────────────────────────────────────────────────┘
+
+> **Note:** `work_orders → service_visits` is 1:N. A single Work Order may generate multiple Service Visits to support: initial failed visits, rescheduled visits, warranty follow-up visits, AMC recurring visits, and multi-technician visits.
 ```
 
 ---
@@ -271,8 +278,13 @@ PostgreSQL 16 is the authoritative **System-of-Record (SoR)**. Foreign keys, con
 * Separate state machines for **Booking Status**, **Work Order Status**, and **Service Visit Status**.
 * Concurrency protection via **Redis distributed locks** preventing slot double-booking.
 
+### Booking Confirmation Payment Rules
+* **COD / Deferred Payment Model:** Booking transitions from PENDING to CONFIRMED immediately after slot availability is validated and locked. Payment status remains PENDING — the service will proceed with COD collection at completion.
+* **Prepaid Model:** Booking transitions to CONFIRMED only after the backend verifies successful payment authorization from the payment gateway. Client-declared payment success is never accepted.
+* The `booking_type` field on the booking determines which confirmation flow applies.
+
 ## 8.4 Field Technician Operations & Offline Sync
-* **Offline-First Field Execution:** SQLite (Room DB) action queue with cryptographic monotonic sequencing.
+* **Offline-First Field Execution:** SQLite (Room DB) action queue with deterministic operation_id (UUID) for idempotency, monotonic local_sequence for ordering, and device_id registration. Cryptographic payload signing is deferred to a future security hardening phase.
 * **CameraX Media Capture:** Local WebP compression ($<500\text{ KB}$) before upload.
 * **Background Sync:** Android `WorkManager` pushes queued actions to `POST /api/v1/dispatch/visits/sync`.
 * **Deterministic Conflict Resolution:** Field physical completion overrides concurrent online cancellations with audit logging.
