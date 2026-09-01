@@ -36,6 +36,9 @@ All detailed specifications, architecture designs, resource requirements, and co
 | 📋 **Software Requirements Specification (SRS)** | Complete module-by-module functional requirements, database schema, RBAC matrix, Cloud Functions API, and security rules. | [**`docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md`**](./docs/SOFTWARE_REQUIREMENTS_SPECIFICATION.md) |
 | ⏱️ **Project Estimation & Resource Plan** | Work Breakdown Structure (WBS), 16-week sprint schedule, manpower skill sets, and development cost estimates. | [**`docs/PROJECT_ESTIMATION_AND_RESOURCE_PLAN.md`**](./docs/PROJECT_ESTIMATION_AND_RESOURCE_PLAN.md) |
 | ☁️ **Infrastructure & Operating Costs** | Zero-manpower cloud hosting, database, Google Maps, SMS gateways, and SaaS operating expenses across business scales. | [**`docs/INFRASTRUCTURE_AND_OPERATING_COSTS.md`**](./docs/INFRASTRUCTURE_AND_OPERATING_COSTS.md) |
+| 🛡️ **Security Policy & Standards** | Zero-trust architecture, encryption in transit/rest, offline data security, anti-tampering, and responsible disclosure. | [**`SECURITY.md`**](./SECURITY.md) |
+| 📜 **Commercial License** | Proprietary and confidential enterprise software license terms and rights reservation. | [**`LICENSE`**](./LICENSE) |
+| 🤝 **Contributor Guide** | Developer setup, Git Flow branching, Android/React/Cloud coding standards, and PR guidelines. | [**`CONTRIBUTING.md`**](./CONTRIBUTING.md) |
 
 ---
 
