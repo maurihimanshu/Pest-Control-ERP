@@ -116,7 +116,7 @@ To prevent client-side parameter tampering (e.g., modifying service rates, apply
 Because the Technician Android App is offline-first:
 
 1. **Encrypted Local Storage:** Offline job data, service checklists, and customer signatures are cached in a sandboxed Room database encrypted with keys stored in the **Android Keystore System**.
-2. **Cryptographic Payload Signing:** Each offline operation is assigned a deterministic operation_id (UUID), authenticated user JWT, and device_id. The server validates identity, enforces idempotency, and maintains a complete audit trail. Cryptographic payload signing is deferred to a future security hardening phase.
+2. **Cryptographic Payload Signing:** Critical offline operations (`START_VISIT`, `COMPLETE_VISIT`, `LOG_CHEMICALS`) are signed by an EC P-256 Android Keystore key. The server verifies the canonical operation envelope against the registered active device key before validating identity, idempotency, and state transitions.
 3. **Media Sandbox:** Photos taken via CameraX are written directly to the application-private directory (`Context.getExternalFilesDir()`) and deleted from the local cache immediately upon successful Object Storage sync.
 
 ---

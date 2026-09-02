@@ -29,7 +29,7 @@ To generate, store, and track legally compliant tax invoices for completed or pa
 Invoice generation must be reliable, idempotent, and legally compliant (sequential numbering).
 
 ## Domain Rules & Constraints
-1. **Sequential Numbering:** Invoice numbers (e.g., `INV-2024-0001`) must be sequential with no gaps. Use a dedicated PostgreSQL `SEQUENCE` or a carefully locked counter table to guarantee this.
+1. **Sequential Numbering:** Invoice numbers (e.g., `INV-2024-0001`) use PostgreSQL `invoice_seq` for unique, monotonically allocated values. Gaps after rollback are expected and must never be reused.
 2. **Idempotency:** If the `PaymentCompletedEvent` is received twice, the system must return the URL of the already generated invoice, not create a new one.
 3. **Storage:** The generated PDF is uploaded to Object Storage (S3/GCS). The database stores the metadata and the URI.
 
@@ -58,7 +58,7 @@ Invoice generation must be reliable, idempotent, and legally compliant (sequenti
 ## Validation Checklist
 - [ ] Is PDF generation triggered asynchronously via RabbitMQ?
 - [ ] Is OpenPDF (or similar Java library) used correctly without memory leaks?
-- [ ] Are invoice numbers strictly sequential?
+- [ ] Are invoice numbers unique and monotonically allocated, with any sequence gaps retained?
 - [ ] Is the PDF securely stored in an S3 bucket with appropriate access controls (presigned URLs)?
 
 ## Common Mistakes

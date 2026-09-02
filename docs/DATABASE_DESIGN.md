@@ -119,13 +119,14 @@ CREATE TABLE agencies (
     phone VARCHAR(32),
     commission_rate NUMERIC(5, 2) NOT NULL DEFAULT 0.00, -- e.g. 15.00%
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Kolkata',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE employees (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    agency_id UUID REFERENCES agencies(id) ON DELETE SET NULL,
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
     employee_code VARCHAR(50) UNIQUE NOT NULL,
     designation VARCHAR(100) NOT NULL,
     emergency_contact VARCHAR(32),
@@ -145,6 +146,14 @@ CREATE TABLE employee_skills (
     skill_id VARCHAR(50) NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
     certified_date DATE,
     PRIMARY KEY (employee_id, skill_id)
+);
+
+CREATE TABLE agency_service_areas (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+    pincode VARCHAR(20) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT uq_agency_service_area UNIQUE (agency_id, pincode)
 );
 ```
 
@@ -193,6 +202,15 @@ CREATE TABLE pricing_rules (
     is_active BOOLEAN NOT NULL DEFAULT TRUE
 );
 
+-- Named pricing tiers are reusable by the catalog and retained on booking items as a snapshot.
+CREATE TABLE pricing_tiers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_id UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT uq_pricing_tier_service_name UNIQUE (service_id, name)
+);
+
 CREATE TABLE coupons (
     code VARCHAR(50) PRIMARY KEY,
     discount_type VARCHAR(20) NOT NULL, -- 'PERCENTAGE', 'FLAT_AMOUNT'
@@ -218,7 +236,7 @@ CREATE TABLE bookings (
     booking_number VARCHAR(50) UNIQUE NOT NULL, -- 'BK-2026-00001'
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
     customer_address_id UUID NOT NULL REFERENCES customer_addresses(id) ON DELETE RESTRICT,
-    agency_id UUID REFERENCES agencies(id) ON DELETE SET NULL,
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
     payment_status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
     scheduled_date DATE NOT NULL,
@@ -232,6 +250,7 @@ CREATE TABLE bookings (
     cancellation_reason TEXT,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    version BIGINT NOT NULL DEFAULT 0,
     CONSTRAINT chk_booking_status CHECK (status IN ('PENDING', 'CONFIRMED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'CLOSED')),
     CONSTRAINT chk_booking_payment_status CHECK (payment_status IN ('PENDING', 'AUTHORIZED', 'PAID', 'PARTIAL', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED'))
 );
@@ -242,7 +261,7 @@ CREATE INDEX idx_bookings_date ON bookings(scheduled_date);
 
 CREATE TABLE booking_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+    booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE RESTRICT,
     service_id UUID NOT NULL REFERENCES services(id) ON DELETE RESTRICT,
     pricing_tier VARCHAR(100),
     quantity NUMERIC(10, 2) NOT NULL DEFAULT 1.00,
@@ -250,18 +269,29 @@ CREATE TABLE booking_items (
     line_total NUMERIC(12, 2) NOT NULL
 );
 
+CREATE TABLE booking_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE RESTRICT,
+    event_type VARCHAR(100) NOT NULL,
+    actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX idx_booking_events_booking ON booking_events(booking_id, occurred_at);
+
 -- 2. Operational Work Order
 CREATE TABLE work_orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     work_order_number VARCHAR(50) UNIQUE NOT NULL, -- 'WO-2026-00001'
-    booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
-    agency_id UUID REFERENCES agencies(id) ON DELETE SET NULL,
+    booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE RESTRICT,
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
     order_type VARCHAR(50) NOT NULL DEFAULT 'INITIAL_SERVICE', -- 'INITIAL_SERVICE', 'AMC_ROUTINE', 'WARRANTY_VISIT'
     status VARCHAR(50) NOT NULL DEFAULT 'ASSIGNED',
     priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL', -- 'NORMAL', 'URGENT', 'CRITICAL'
     assigned_employee_id UUID REFERENCES employees(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    version BIGINT NOT NULL DEFAULT 0,
     CONSTRAINT chk_work_order_status CHECK (status IN ('ASSIGNED', 'ACCEPTED', 'REJECTED', 'ON_THE_WAY', 'ARRIVED', 'STARTED', 'COMPLETED', 'CANCELLED'))
 );
 
@@ -272,7 +302,7 @@ CREATE INDEX idx_work_orders_status ON work_orders(status);
 CREATE TABLE service_visits (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     visit_number VARCHAR(50) UNIQUE NOT NULL, -- 'SV-2026-00001'
-    work_order_id UUID NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+    work_order_id UUID NOT NULL REFERENCES work_orders(id) ON DELETE RESTRICT,
     primary_employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
     status VARCHAR(30) NOT NULL DEFAULT 'SCHEDULED',
     scheduled_start_time TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -288,11 +318,34 @@ CREATE TABLE service_visits (
     offline_event_id VARCHAR(128),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    version BIGINT NOT NULL DEFAULT 0,
     CONSTRAINT chk_service_visit_status CHECK (status IN ('SCHEDULED', 'ON_THE_WAY', 'ARRIVED', 'STARTED', 'COMPLETED', 'CANCELLED', 'FAILED'))
 );
 
 CREATE INDEX idx_service_visits_employee ON service_visits(primary_employee_id);
 CREATE INDEX idx_service_visits_status ON service_visits(status);
+
+CREATE TABLE service_checklists (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_visit_id UUID NOT NULL REFERENCES service_visits(id) ON DELETE RESTRICT,
+    checklist JSONB NOT NULL,
+    completed_at TIMESTAMPTZ,
+    completed_by UUID REFERENCES employees(id) ON DELETE SET NULL,
+    CONSTRAINT uq_service_checklist_visit UNIQUE (service_visit_id)
+);
+
+CREATE TABLE technician_devices (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
+    device_id UUID NOT NULL UNIQUE,
+    public_key_pem TEXT NOT NULL,
+    key_algorithm VARCHAR(50) NOT NULL DEFAULT 'EC_P256_SHA256',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX uq_active_device_per_technician
+    ON technician_devices(employee_id) WHERE is_active;
 ```
 
 ---
@@ -313,6 +366,7 @@ CREATE TABLE chemical_products (
 CREATE TABLE chemical_batches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     chemical_product_id UUID NOT NULL REFERENCES chemical_products(id) ON DELETE RESTRICT,
+    inventory_location_id UUID NOT NULL,
     batch_number VARCHAR(100) NOT NULL,
     manufacturing_date DATE,
     expiry_date DATE NOT NULL,
@@ -320,12 +374,41 @@ CREATE TABLE chemical_batches (
     current_quantity_available NUMERIC(10, 2) NOT NULL,
     cost_per_unit NUMERIC(10, 2) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    version BIGINT NOT NULL DEFAULT 0,
     CONSTRAINT chk_batch_qty_nonneg CHECK (current_quantity_available >= 0)
 );
 
+CREATE TABLE inventory_locations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+    employee_id UUID REFERENCES employees(id) ON DELETE RESTRICT,
+    location_type VARCHAR(30) NOT NULL, -- 'CENTRAL_WAREHOUSE', 'BRANCH_WAREHOUSE', 'TECHNICIAN_TRUNK'
+    name VARCHAR(150) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT chk_inventory_location_type CHECK (location_type IN ('CENTRAL_WAREHOUSE', 'BRANCH_WAREHOUSE', 'TECHNICIAN_TRUNK'))
+);
+ALTER TABLE chemical_batches
+    ADD CONSTRAINT fk_chemical_batch_location
+    FOREIGN KEY (inventory_location_id) REFERENCES inventory_locations(id) ON DELETE RESTRICT;
+
+CREATE TABLE inventory_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+    chemical_batch_id UUID NOT NULL REFERENCES chemical_batches(id) ON DELETE RESTRICT,
+    inventory_location_id UUID NOT NULL REFERENCES inventory_locations(id) ON DELETE RESTRICT,
+    transaction_type VARCHAR(40) NOT NULL, -- 'RECEIPT', 'TRANSFER_OUT', 'TRANSFER_IN', 'SERVICE_DEDUCTION', 'REVERSAL', 'ADJUSTMENT'
+    quantity_change NUMERIC(10, 2) NOT NULL,
+    reference_visit_id UUID REFERENCES service_visits(id) ON DELETE RESTRICT,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_inventory_transaction_type CHECK (transaction_type IN ('RECEIPT', 'TRANSFER_OUT', 'TRANSFER_IN', 'SERVICE_DEDUCTION', 'REVERSAL', 'ADJUSTMENT')),
+    CONSTRAINT chk_inventory_transaction_nonzero CHECK (quantity_change <> 0)
+);
+CREATE INDEX idx_inventory_transactions_batch ON inventory_transactions(chemical_batch_id, created_at);
+
 CREATE TABLE service_material_usage (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    service_visit_id UUID NOT NULL REFERENCES service_visits(id) ON DELETE CASCADE,
+    service_visit_id UUID NOT NULL REFERENCES service_visits(id) ON DELETE RESTRICT,
     chemical_batch_id UUID NOT NULL REFERENCES chemical_batches(id) ON DELETE RESTRICT,
     quantity_used NUMERIC(10, 2) NOT NULL,
     dosage_rate VARCHAR(100),
@@ -352,8 +435,20 @@ CREATE TABLE payments (
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'AUTHORIZED', 'PAID', 'PARTIAL', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED'
     idempotency_key VARCHAR(128) UNIQUE,
     paid_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    version BIGINT NOT NULL DEFAULT 0
 );
+
+CREATE TABLE payment_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payment_id UUID NOT NULL REFERENCES payments(id) ON DELETE RESTRICT,
+    transaction_type VARCHAR(30) NOT NULL, -- 'AUTHORIZATION', 'CAPTURE', 'REFUND', 'VOID', 'COD_COLLECTION'
+    amount NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
+    gateway_reference VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE SEQUENCE invoice_seq;
 
 CREATE TABLE invoices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -367,11 +462,28 @@ CREATE TABLE invoices (
     issued_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE invoice_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    invoice_id UUID NOT NULL REFERENCES invoices(id) ON DELETE RESTRICT,
+    description VARCHAR(500) NOT NULL,
+    quantity NUMERIC(10, 2) NOT NULL CHECK (quantity > 0),
+    unit_price NUMERIC(12, 2) NOT NULL,
+    line_total NUMERIC(12, 2) NOT NULL
+);
+
+CREATE TABLE expense_categories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+    name VARCHAR(100) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT uq_expense_category_agency_name UNIQUE (agency_id, name)
+);
+
 CREATE TABLE expenses (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agency_id UUID REFERENCES agencies(id) ON DELETE SET NULL,
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
     employee_id UUID REFERENCES employees(id) ON DELETE SET NULL,
-    category VARCHAR(100) NOT NULL, -- 'FUEL_CONVEYANCE', 'EQUIPMENT_REPAIR', 'CHEMICAL_RESTOCK', 'OFFICE_RENT'
+    category_id UUID NOT NULL REFERENCES expense_categories(id) ON DELETE RESTRICT,
     amount NUMERIC(12, 2) NOT NULL,
     expense_date DATE NOT NULL,
     description TEXT,
@@ -399,7 +511,8 @@ CREATE TABLE amc_contracts (
     end_date DATE NOT NULL,
     contract_amount NUMERIC(12, 2) NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE', 'EXPIRED', 'TERMINATED'
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    version BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE amc_schedules (
@@ -409,13 +522,82 @@ CREATE TABLE amc_schedules (
     visit_sequence INT NOT NULL, -- e.g. Visit 1 of 4
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'GENERATED_TO_WORK_ORDER', 'COMPLETED'
     generated_work_order_id UUID REFERENCES work_orders(id) ON DELETE SET NULL,
-    CONSTRAINT uq_amc_schedule_contract_seq UNIQUE (amc_contract_id, visit_sequence)
+    CONSTRAINT uq_amc_schedule_contract_seq UNIQUE (amc_contract_id, visit_sequence),
+    CONSTRAINT uq_amc_schedule_contract_date UNIQUE (amc_contract_id, scheduled_date)
 );
 ```
 
 ---
 
-### 3.8 File Storage Metadata & Immutable Audit Trail
+### 3.8 Notifications & Customer Support
+
+```sql
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    channel VARCHAR(30) NOT NULL,
+    template_key VARCHAR(100),
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+    payload JSONB NOT NULL,
+    sent_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE notification_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+    template_key VARCHAR(100) NOT NULL,
+    channel VARCHAR(30) NOT NULL,
+    subject_template TEXT,
+    body_template TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT uq_notification_template UNIQUE NULLS NOT DISTINCT (agency_id, template_key, channel)
+);
+
+CREATE TABLE device_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(512) NOT NULL UNIQUE,
+    platform VARCHAR(20) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE support_tickets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+    booking_id UUID REFERENCES bookings(id) ON DELETE RESTRICT,
+    status VARCHAR(30) NOT NULL DEFAULT 'OPEN',
+    subject VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    version BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE support_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_id UUID NOT NULL REFERENCES support_tickets(id) ON DELETE RESTRICT,
+    sender_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    message TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE service_ratings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_visit_id UUID NOT NULL REFERENCES service_visits(id) ON DELETE RESTRICT,
+    customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+    rating SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    feedback TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_service_rating_visit_customer UNIQUE (service_visit_id, customer_id)
+);
+```
+
+---
+
+### 3.9 File Storage Metadata & Immutable Audit Trail
 
 ```sql
 -- Polymorphic File Metadata with Lifecycle Management
@@ -443,6 +625,9 @@ CREATE TABLE file_metadata (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_file_access_policy CHECK (access_policy IN ('PRIVATE', 'AGENCY', 'PUBLIC')),
+    CONSTRAINT chk_file_agency_scope CHECK (
+        agency_id IS NOT NULL OR (entity_type = 'SERVICE_CATALOG' AND access_policy = 'PUBLIC')
+    ),
     CONSTRAINT chk_file_status CHECK (file_status IN ('INITIATED', 'UPLOADING', 'UPLOADED', 'VERIFIED', 'ATTACHED', 'FAILED', 'ORPHANED'))
 );
 CREATE INDEX idx_file_metadata_entity ON file_metadata(entity_type, entity_id);
@@ -483,8 +668,8 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 CREATE TABLE availability_slots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
-    service_category_id UUID REFERENCES service_categories(id) ON DELETE CASCADE,
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+    service_category_id UUID NOT NULL REFERENCES service_categories(id) ON DELETE RESTRICT,
     employee_id UUID REFERENCES employees(id) ON DELETE SET NULL,
     service_date DATE NOT NULL,
     start_time TIME NOT NULL,
@@ -501,6 +686,7 @@ CREATE TABLE availability_slots (
     CONSTRAINT chk_slot_capacity_positive CHECK (capacity > 0),
     CONSTRAINT chk_slot_booked_nonneg CHECK (booked_count >= 0),
     CONSTRAINT chk_slot_capacity CHECK (booked_count <= capacity),
+    CONSTRAINT chk_employee_slot_capacity CHECK (employee_id IS NULL OR capacity = 1),
     CONSTRAINT ex_slot_employee_time_overlap EXCLUDE USING gist (
         employee_id WITH =,
         slot_range WITH &&
@@ -627,9 +813,9 @@ CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
 
 ---
 
-### 3.9 Multi-Tenant Defense-in-Depth (PostgreSQL Row Level Security)
+### 3.10 Multi-Tenant Defense-in-Depth (PostgreSQL Row Level Security)
 
-In addition to repository-level `findBy...AndAgencyId` query isolation, PostgreSQL Row Level Security (RLS) is enabled on all agency-scoped tables as architectural defense-in-depth:
+In addition to repository-level `findBy...AndAgencyId` query isolation, PostgreSQL RLS is mandatory on every agency-scoped table. The application connects as a non-owner role without `BYPASSRLS`; table ownership remains with a migration role. `FORCE ROW LEVEL SECURITY` prevents a table owner from silently bypassing policies.
 
 ```sql
 -- Application connection sets local session parameter on each request:
@@ -637,14 +823,20 @@ In addition to repository-level `findBy...AndAgencyId` query isolation, PostgreS
 -- SET LOCAL app.is_super_admin = 'false';
 
 ALTER TABLE work_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE work_orders FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_work_orders_agency ON work_orders
     FOR ALL
     USING (
         current_setting('app.is_super_admin', true) = 'true'
         OR agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
+    )
+    WITH CHECK (
+        current_setting('app.is_super_admin', true) = 'true'
+        OR agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
     );
 
 ALTER TABLE service_visits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE service_visits FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_service_visits_agency ON service_visits
     FOR ALL
     USING (
@@ -653,18 +845,64 @@ CREATE POLICY rls_service_visits_agency ON service_visits
             SELECT id FROM work_orders 
             WHERE agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
         )
+    )
+    WITH CHECK (
+        current_setting('app.is_super_admin', true) = 'true'
+        OR work_order_id IN (
+            SELECT id FROM work_orders
+            WHERE agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
+        )
     );
 
 ALTER TABLE sync_conflicts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sync_conflicts FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_sync_conflicts_agency ON sync_conflicts
     FOR ALL
     USING (
         current_setting('app.is_super_admin', true) = 'true'
         OR agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
+    )
+    WITH CHECK (
+        current_setting('app.is_super_admin', true) = 'true'
+        OR agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
     );
+
+-- Apply the same direct-agency policy to every direct agency-owned table.
+DO $$
+DECLARE protected_table TEXT;
+BEGIN
+    FOREACH protected_table IN ARRAY ARRAY[
+        'bookings', 'employees', 'agency_service_areas', 'inventory_locations',
+        'inventory_transactions', 'expenses', 'expense_categories',
+        'support_tickets', 'notifications', 'notification_templates'
+    ]
+    LOOP
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', protected_table);
+        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', protected_table);
+        EXECUTE format(
+            'CREATE POLICY %I ON %I FOR ALL USING (current_setting(''app.is_super_admin'', true) = ''true'' OR agency_id = NULLIF(current_setting(''app.current_agency_id'', true), '''')::uuid) WITH CHECK (current_setting(''app.is_super_admin'', true) = ''true'' OR agency_id = NULLIF(current_setting(''app.current_agency_id'', true), '''')::uuid)',
+            'rls_' || protected_table || '_agency', protected_table
+        );
+    END LOOP;
+END $$;
+
+-- Global file metadata is permitted only for public service-catalog assets.
+ALTER TABLE file_metadata ENABLE ROW LEVEL SECURITY;
+ALTER TABLE file_metadata FORCE ROW LEVEL SECURITY;
+CREATE POLICY rls_file_metadata_scope ON file_metadata
+    FOR ALL
+    USING (
+        current_setting('app.is_super_admin', true) = 'true'
+        OR agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
+        OR (agency_id IS NULL AND entity_type = 'SERVICE_CATALOG' AND access_policy = 'PUBLIC')
+    )
+    WITH CHECK (
+        current_setting('app.is_super_admin', true) = 'true'
+        OR agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
+    );
+
 ```
 
 ---
 
 *This database schema serves as the single source of truth for Flyway migration scripts.*
-

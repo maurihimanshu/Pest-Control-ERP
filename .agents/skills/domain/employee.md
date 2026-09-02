@@ -29,7 +29,7 @@ To manage internal staff, specifically field technicians, their assigned agencie
 Technicians are the core operational asset. Their skills dictate which `Work Orders` they can be assigned to.
 
 ## Domain Rules & Constraints
-1. **Roles:** Employees have specific roles (ADMIN, DISPATCHER, TECHNICIAN, MANAGER).
+1. **Roles:** Employees use the canonical roles `ADMIN`, `DISPATCHER`, `TECHNICIAN`, `AGENCY_MANAGER`, and `ACCOUNTANT` as applicable.
 2. **Agency Association:** Most technicians belong to a specific `agency_id` (branch). Cross-branch dispatching requires special overrides.
 3. **Skills Matrix:** A many-to-many relationship (`employee_skills`) tracks what services a tech is qualified to perform (e.g., Termite Control requires specific certification).
 

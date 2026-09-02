@@ -4,7 +4,7 @@
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
 **Supersedes:** None
-**Superseded by:** None
+**Superseded by:** ADR-015
 **Related:** ADR-002, ADR-008, docs/CONCURRENCY_AND_IDEMPOTENCY.md, docs/ARCHITECTURE.md
 **Affected Artifacts:** docs/CONCURRENCY_AND_IDEMPOTENCY.md, docs/DATABASE_DESIGN.md, docs/TESTING_STRATEGY.md
 
@@ -15,7 +15,7 @@ Pest control company has multiple city/regional branches. Not a SaaS platform se
 How should data be partitioned or scoped to support multiple agencies/branches?
 
 ## Decision
-The system supports a single parent company with multiple agencies/branches as operational sub-tenants. Agencies are not fully isolated SaaS tenants — they share a single PostgreSQL schema with agency_id FK-based data segregation. All queries for agency-scoped entities MUST include agency_id in WHERE clause, enforced in the service layer by extracting agency_id from the authenticated user's profile.
+Superseded by ADR-015. The shared-schema, `agency_id` model remains, but it is now enforced by both application scoping and PostgreSQL Row Level Security.
 
 ## Alternatives Considered
 | Alternative | Reason Rejected |
@@ -34,3 +34,4 @@ The system supports a single parent company with multiple agencies/branches as o
 
 ## Status History
 - September 2026: Accepted
+- September 2026: Superseded by ADR-015 (RLS defense-in-depth is required in V1)

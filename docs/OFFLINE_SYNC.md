@@ -18,7 +18,7 @@ Pest control technicians operate in basements, industrial warehouses, sub-ground
 3. **Idempotency & Zero Duplicate Mutations:** Every local event carries a client-generated UUID `idempotencyKey` and monotonic sequence number.
 4. **Deterministic Conflict Resolution:** Explicit, rule-based conflict handling ensures field physical evidence is never silently discarded.
 
-### Security without Cryptographic Payload Signing (V1):
+### Device-Bound Cryptographic Payload Signing (V1):
 Offline operations are secured through:
 - Firebase JWT authentication (user identity cryptographically verified by Firebase)
 - operation_id UUID idempotency (prevents replay of individual operations)
@@ -27,7 +27,7 @@ Offline operations are secured through:
 - Server-side state validation (backend is authoritative — stale client operations rejected)
 - Complete audit trail in audit_logs
 
-Cryptographic payload signing (e.g., Android Keystore Ed25519 signatures on each operation payload) is documented in ADR-006 as a future security hardening option for Phase 2.
+Critical offline mutations (`START_VISIT`, `COMPLETE_VISIT`, and `LOG_CHEMICALS`) are signed with an EC P-256 Android Keystore key. The server verifies the canonical operation envelope against the active `technician_devices` public key before processing; this requirement is governed by ADR-015.
 
 ---
 

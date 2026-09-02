@@ -148,7 +148,7 @@ Spring Security RBAC
 
 ### Booking (Commercial Request)
 - Customer's service request with pricing, address, schedule
-- **Status**: `PENDING` → `CONFIRMED` → `ASSIGNED` → `IN_PROGRESS` → `COMPLETED` → `CANCELLED` | `RESCHEDULED` | `CLOSED`
+- **Status**: `PENDING` → `CONFIRMED` → `ASSIGNED` → `IN_PROGRESS` → `COMPLETED` → `CLOSED` (or `CANCELLED`). Rescheduling updates the active appointment; it is not a status.
 
 ### Work Order (Operational Dispatch)
 - Created from a Booking; represents the operational job dispatched to a technician
@@ -232,6 +232,7 @@ Technician Android (offline-capable)
         (operation_id UUID, idempotency_key, type, payload JSON,
          status, retry_count, client_timestamp, sync_status)
   └── CameraX → WebP compression < 500 KB before upload
+  └── EC P-256 Keystore signature for START_VISIT, COMPLETE_VISIT, LOG_CHEMICALS
   └── WorkManager SyncWorker (exponential backoff, network constraint)
   └── POST /api/v1/dispatch/visits/sync → Spring Boot → PostgreSQL
 ```
@@ -293,4 +294,3 @@ Technician Android (offline-capable)
 ❌ @Service class communicating directly with another module's @Repository
 ❌ findById(id) on agency-scoped entities without agencyId check
 ```
-

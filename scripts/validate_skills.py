@@ -5,7 +5,7 @@ validate_skills.py
 Automated validator for all agent skill definitions in .agents/skills/.
 Checks:
 1. Structural Validation:
-   - Frontmatter presence and valid YAML structure
+   - Frontmatter presence and repository-supported YAML subset structure
    - Required fields (name, description, category, triggers, inputs, outputs, dependencies, related_skills)
    - Uniqueness of skill names
    - Valid categorization
@@ -40,7 +40,12 @@ FORBIDDEN_SEMANTIC_PATTERNS = [
     (r'\bfirebase-functions\b', "Found Cloud Functions reference. Backend is Spring Boot 3.3.x Modular Monolith."),
 ]
 
-def parse_simple_yaml(yaml_text, file_path):
+def parse_repository_frontmatter(yaml_text, file_path):
+    """Parse the deliberately restricted frontmatter subset used by this repository.
+
+    This is not a general YAML parser. Skills must use top-level scalar/list values
+    only; complex YAML constructs are intentionally rejected by repository review.
+    """
     lines = yaml_text.splitlines()
     data = {}
     current_key = None
@@ -136,7 +141,7 @@ def main():
 
         yaml_content = parts[1]
         try:
-            frontmatter = parse_simple_yaml(yaml_content, rel_path)
+            frontmatter = parse_repository_frontmatter(yaml_content, rel_path)
         except Exception as e:
             errors.append(f"{rel_path}: YAML parsing error: {e}")
             continue
@@ -199,5 +204,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-
 

@@ -37,7 +37,7 @@ The `Booking` is the root aggregate for a service request. It dictates what serv
    Valid alternative flows:
    `PENDING` -> `CANCELLED`
    `CONFIRMED` -> `CANCELLED`
-   `ASSIGNED` -> `RESCHEDULED` -> (back to ASSIGNED)
+   Rescheduling is an atomic appointment update that retains the active booking status; it is not a `BookingStatus`.
    `COMPLETED` -> `CLOSED` (after accounting/invoice settled)
 
 ## Entity Structure

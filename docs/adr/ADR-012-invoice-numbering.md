@@ -15,7 +15,7 @@ Need sequential, unique, non-repeatable invoice numbers for financial/legal comp
 How to generate sequential invoice numbers safely under concurrency?
 
 ## Decision
-Invoice numbers generated using PostgreSQL SEQUENCE: invoice_seq. Format: INV-{YYYY}-{NNNNN padded to 5 digits}. Sequence is transactional — assigned in the same transaction as invoice creation. Never gaps-free (sequences can have gaps on rollback — acceptable for business invoicing).
+Invoice numbers are generated using PostgreSQL `invoice_seq`. Format: `INV-{YYYY}-{NNNNN padded to 5 digits}`. `nextval()` is non-transactional, so values can be skipped after rollbacks or failed attempts; uniqueness and monotonic allocation are guaranteed, gaplessness is not.
 
 ## Alternatives Considered
 | Alternative | Reason Rejected |

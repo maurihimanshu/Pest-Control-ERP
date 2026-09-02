@@ -4,18 +4,18 @@
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
 **Supersedes:** None
-**Superseded by:** None
+**Superseded by:** ADR-015
 **Related:** ADR-005, docs/CONCURRENCY_AND_IDEMPOTENCY.md, docs/OFFLINE_SYNC.md
 **Affected Artifacts:** docs/OFFLINE_SYNC.md, docs/CONCURRENCY_AND_IDEMPOTENCY.md, docs/DATABASE_DESIGN.md
 
 ## Context
-Field technicians operate in areas with poor connectivity. Data must not be lost. Cryptographic signing adds key management complexity not justified for V1.
+Field technicians operate in areas with poor connectivity. Data must not be lost. Device-bound signing was later made a V1 security requirement; see ADR-015.
 
 ## Problem
 How should the technician Android App handle offline scenarios and data synchronization?
 
 ## Decision
-Technician Android App is offline-first using Room SQLite + SQLCipher + WorkManager + server-side idempotency. NO cryptographic payload signing in V1 — replaced by Firebase JWT authentication + operation_id idempotency + server-side state validation + audit logging.
+Superseded by ADR-015. Retained only as the historical V1 simplification decision.
 
 ## Alternatives Considered
 | Alternative | Reason Rejected |
@@ -34,3 +34,4 @@ Technician Android App is offline-first using Room SQLite + SQLCipher + WorkMana
 
 ## Status History
 - September 2026: Accepted
+- September 2026: Superseded by ADR-015 (device-bound signing is required in V1)

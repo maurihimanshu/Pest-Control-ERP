@@ -9,7 +9,7 @@
 **Affected Artifacts:** docs/MODULE_CATALOG.md, docs/ARCHITECTURE.md, .agents/skills/_architecture_rules.md
 
 ## Context
-Team size, complexity, initial scale don't justify distributed microservices. Modules: auth, users, customers, employees, agencies, services, pricing, bookings, scheduling, dispatch, payments, invoices, expenses, inventory, amc, notifications, support, reports, audit.
+Team size, complexity, and initial scale do not justify distributed microservices. The canonical 18 modules are defined in `docs/MODULE_CATALOG.md`: auth, users, customers, employees, agencies, catalog, bookings, dispatch, payments, inventory, expenses, amc, notifications, support, files, reporting, audit, and outbox.
 
 ## Problem
 How should the backend application be structured to balance maintainability and complexity?

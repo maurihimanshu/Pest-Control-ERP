@@ -85,7 +85,7 @@ The test suite must explicitly validate non-negotiable enterprise business invar
 9. **Presigned File Upload Authorization:** Direct attempts to request upload/download URLs for unassigned visits or other agencies are rejected.
 10. **AMC Schedule Single-Instance Advisory Lock:** Concurrent scheduler executions across multiple application nodes acquire `pg_try_advisory_xact_lock` so only one node executes the generation.
 11. **Transactional Outbox At-Least-Once Delivery:** Outbox relay worker survives simulated message broker restarts without losing pending events or producing phantom events.
-12. **Sequential Invoice Numbering Concurrency:** High-concurrency invoice generation produces strictly sequential `INV-YYYY-NNNNN` numbers without gaps or duplicate numbers.
+12. **Invoice Numbering Concurrency:** High-concurrency invoice generation produces unique, monotonically allocated `INV-YYYY-NNNNN` numbers without duplicates. Gaps caused by PostgreSQL sequence allocation and rollback are recorded and accepted.
 
 ## 6. First Vertical Slice Executable Test Specification
 
@@ -129,4 +129,3 @@ Notification Multicast (FCM / SMS)
 ---
 
 *Governed by enterprise software quality, automated Testcontainers integration, and continuous integration standards.*
-

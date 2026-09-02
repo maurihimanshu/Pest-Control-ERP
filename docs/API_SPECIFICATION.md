@@ -19,10 +19,10 @@
   - **Business Dates (`LocalDate` / `DATE`):** Formatted as ISO 8601 calendar dates `YYYY-MM-DD` (e.g., `2026-09-01`). Used for appointment booking dates, batch expiry dates, and AMC contract schedules.
   - **Local Operating Timezone:** Resolved per agency/branch (`agencies.timezone`, default `Asia/Kolkata`) for calendar scheduling, shift calculation, and daily cron trigger evaluation.
 * **Canonical Monetary Contract:**
-  - Monetary values are represented in JSON with an explicit decimal amount and 3-letter ISO 4217 currency code:
+  - Monetary values are represented in JSON as decimal strings with a 3-letter ISO 4217 currency code. JSON numbers are forbidden for money:
     ```json
     {
-      "amount": 1499.00,
+      "amount": "1499.00",
       "currency": "INR"
     }
     ```
@@ -127,10 +127,10 @@ All list endpoints support standard Spring Data `Pageable` parameters:
 │ POST   │ /api/v1/payments/initiate                 │ CUSTOMER          │ Init Payment Intent│
 │ POST   │ /api/v1/payments/webhooks/{gateway}       │ Public (HMAC)     │ Gateway Webhook    │
 │ GET    │ /api/v1/invoices/{id}/download            │ CUSTOMER, ADMIN   │ Get PDF Invoice    │
-│ GET    │ /api/v1/inventory/chemicals               │ ADMIN, MANAGER    │ Chemical Inventory │
-│ POST   │ /api/v1/inventory/batches                 │ ADMIN, MANAGER    │ Receive New Batch  │
+│ GET    │ /api/v1/inventory/chemicals               │ ADMIN, AGENCY_MANAGER │ Chemical Inventory │
+│ POST   │ /api/v1/inventory/batches                 │ ADMIN, AGENCY_MANAGER │ Receive New Batch  │
 │ POST   │ /api/v1/amc/contracts                     │ ADMIN, CUSTOMER   │ Create AMC Contract│
-│ GET    │ /api/v1/reports/dashboard-kpis            │ ADMIN, MANAGER    │ Management KPIs    │
+│ GET    │ /api/v1/reports/dashboard-kpis            │ ADMIN, AGENCY_MANAGER │ Management KPIs    │
 │ GET    │ /api/v1/audit/logs                        │ SUPER_ADMIN       │ Query Audit Logs   │
 └────────┴───────────────────────────────────────────┴───────────────────┴────────────────────┘
 ```
@@ -160,15 +160,15 @@ All list endpoints support standard Spring Data `Pageable` parameters:
 {
   "success": true,
   "data": {
-    "basePrice": 1499.00,
-    "addOnTotal": 300.00,
-    "subtotal": 1799.00,
-    "discountAmount": 359.80,
+    "basePrice": "1499.00",
+    "addOnTotal": "300.00",
+    "subtotal": "1799.00",
+    "discountAmount": "359.80",
     "discountDescription": "20% off with coupon WELCOME20",
-    "taxableAmount": 1439.20,
-    "taxAmount": 259.06,
-    "taxRatePercentage": 18.00,
-    "totalPayableAmount": 1698.26,
+    "taxableAmount": "1439.20",
+    "taxAmount": "259.06",
+    "taxRatePercentage": "18.00",
+    "totalPayableAmount": "1698.26",
     "currency": "INR"
   },
   "message": "Pricing calculated successfully",
@@ -213,7 +213,7 @@ All list endpoints support standard Spring Data `Pageable` parameters:
     "paymentStatus": "PENDING",
     "scheduledDate": "2026-09-12",
     "scheduledTimeSlot": "10:00 AM - 12:00 PM",
-    "totalPayableAmount": 1698.26,
+    "totalPayableAmount": "1698.26",
     "workOrderId": "8f9a0b1c-2d3e-4f5a-6b7c-8d9e0f1a2b3c",
     "workOrderNumber": "WO-2026-00042"
   },
@@ -243,13 +243,13 @@ All list endpoints support standard Spring Data `Pageable` parameters:
   "materialsUsed": [
     {
       "chemicalBatchId": "4c5d6e7f-8a9b-0c1d-2e3f-4a5b6c7d8e9f",
-      "quantityUsed": 50.00,
+      "quantityUsed": "50.00",
       "dosageRate": "10g / cabinet",
       "targetPest": "German Cockroach"
     }
   ],
   "isCashCollected": true,
-  "cashAmountCollected": 1698.26
+  "cashAmountCollected": "1698.26"
 }
 ```
 

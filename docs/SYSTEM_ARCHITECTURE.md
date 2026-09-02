@@ -247,7 +247,7 @@ Field photos (before/after treatment photos, customer signatures) captured in ze
 ```
 
 **Mobile Device Edge Case Behaviors:**
-1. **Device Storage Exhaustion:** CameraX compresses images dynamically to WebP ($\le 1.5\text{ MB}$) with local storage quotas ($\le 500\text{ MB}$ total cached media); warns technician when device disk space drops below $100\text{ MB}$.
+1. **Device Storage Exhaustion:** CameraX compresses images dynamically to WebP ($< 500\text{ KB}$) with local storage quotas ($\le 500\text{ MB}$ total cached media); warns technician when device disk space drops below $100\text{ MB}$.
 2. **App Termination / Device Reboot:** WorkManager constraints (`NetworkType.CONNECTED`) automatically resume pending uploads without creating duplicates.
 3. **Logout with Unsynced Media:** The app explicitly warns the technician and blocks voluntary logout until all `UPLOAD_PENDING` media are synchronized, or prompts for supervisor override.
 
@@ -267,4 +267,3 @@ Field photos (before/after treatment photos, customer signatures) captured in ze
 | Admin React Web App | 🔲 Not Yet Implemented |
 
 This repository serves as the complete architecture baseline and implementation specification.
-
