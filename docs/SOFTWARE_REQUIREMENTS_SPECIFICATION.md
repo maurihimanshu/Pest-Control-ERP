@@ -6,7 +6,7 @@
 **Primary Database:** PostgreSQL 16  
 **Cache & Message Broker:** Redis 7.2 & RabbitMQ 3.13  
 **Target Systems:** Customer Android App, Technician Android App, Admin Web ERP Dashboard, Spring Boot REST Backend  
-**Supporting Services:** Firebase Authentication, Firebase Cloud Messaging, Provider-Neutral Object Storage  
+**Supporting Services:** Firebase Authentication, Firebase Cloud Messaging, Provider-Neutral Object Storage. Firebase is limited to identity and push delivery; Firestore, Firebase Realtime Database, and Cloud Functions are not used for ERP data or backend logic.
 **Date:** September 2026  
 
 ---
@@ -43,6 +43,8 @@
 # 1. Executive Summary & Purpose
 
 The **Pest Control ERP Platform** is a unified, multi-platform software suite engineered to digitize and automate the entire operational lifecycle of a modern pest control enterprise.
+
+PostgreSQL 16 is the sole system of record for all ERP domain data. Firebase Authentication and Firebase Cloud Messaging are supporting services only; Firestore, Firebase Realtime Database, and Cloud Functions are explicitly out of scope.
 
 The platform coordinates interactions among four primary stakeholder groups:
 1. **Customers:** Discover pest control services, request quotes, schedule visits, make payments, track technician status, and access service histories.
@@ -91,6 +93,7 @@ The platform coordinates interactions among four primary stakeholder groups:
              │                         External Supporting Services                         │
              │ • Firebase Authentication (Identity Provider for Customer, Tech & Admin)     │
              │ • Firebase Cloud Messaging (FCM HTTP v1 Push Alerts)                         │
+             │ • No Firestore, Firebase Realtime Database, or Cloud Functions               │
              │ • Payment Gateways (Razorpay / Stripe Webhook Integration)                   │
              │ • Google Maps Platform (Geocoding & Places Autocomplete)                     │
              │ • Transactional SMS / WhatsApp Provider (MSG91 / Twilio)                     │

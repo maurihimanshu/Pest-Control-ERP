@@ -220,7 +220,7 @@ Technician Android (offline-capable)
   └── POST /api/v1/dispatch/visits/sync → Spring Boot → PostgreSQL
 ```
 
-- **Conflict rule**: Physical field completion OVERRIDES administrative online cancellation — logged in audit_logs
+- **Conflict rule**: An offline completion received after an administrative cancellation MUST NOT override the cancellation. Record a conflict, preserve both the cancellation and submitted completion evidence, and require an authorized DISPATCHER or ADMIN resolution; log the decision in `audit_logs`.
 - Backend NEVER blindly overwrites server state with stale client data
 - Each offline operation has a unique `operation_id` and `idempotency_key`
 

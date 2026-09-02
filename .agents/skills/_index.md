@@ -117,7 +117,7 @@ related_skills:
 | [`android/technician/room-database.md`](./android/technician/room-database.md) | SQLCipher, entities, DAOs, offline operation queue schema |
 | [`android/technician/workmanager-sync.md`](./android/technician/workmanager-sync.md) | `SyncWorker`, exponential backoff, POST `/visits/sync`, partial sync |
 | [`android/technician/service-execution.md`](./android/technician/service-execution.md) | Full field flow: accept → ON_THE_WAY → ARRIVED → checklist → COMPLETED |
-| [`android/technician/conflict-resolution.md`](./android/technician/conflict-resolution.md) | `operation_id`, `idempotency_key`, conflict rules, physical overrule |
+| [`android/technician/conflict-resolution.md`](./android/technician/conflict-resolution.md) | `operation_id`, `idempotency_key`, conflict rules, cancellation-preserving resolution |
 | [`android/technician/attachment-upload.md`](./android/technician/attachment-upload.md) | Pre-signed URL pattern, WebP compression < 500 KB, retry queue |
 
 ---
@@ -153,7 +153,7 @@ related_skills:
 | [`messaging/rabbitmq-consumer.md`](./messaging/rabbitmq-consumer.md) | `@RabbitListener`, idempotent consumer, DLQ binding, manual ack |
 | [`messaging/event-naming.md`](./messaging/event-naming.md) | PascalCase event names, payload structure, full domain event catalog |
 | [`messaging/dead-letter-queues.md`](./messaging/dead-letter-queues.md) | DLX exchange, TTL binding, DLQ depth monitoring, reprocessing strategy |
-| [`messaging/outbox-pattern.md`](./messaging/outbox-pattern.md) | Outbox table, `@TransactionalEventListener`, background publisher polling |
+| [`messaging/outbox-pattern.md`](./messaging/outbox-pattern.md) | Atomic business and outbox writes, background publisher polling |
 
 ---
 

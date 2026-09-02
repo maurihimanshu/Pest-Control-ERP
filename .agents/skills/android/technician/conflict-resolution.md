@@ -16,7 +16,7 @@ related_skills:
 # technician-conflict-resolution
 
 ## Purpose
-Skill for offline conflict resolution. Cover: operation_id, idempotency_key, client_timestamp, server_timestamp, retry_count, sync_status fields. Rule: physical field completion overrides online administrative cancellation with audit log. Backend is authoritative. Never blindly overwrite server state.
+Skill for offline conflict resolution. Cover: operation_id, idempotency_key, client_timestamp, server_timestamp, retry_count, sync_status fields. An offline completion must not override an online administrative cancellation; create a conflict record and require an authorized resolution with an audit log. Backend is authoritative. Never blindly overwrite server state.
 
 ## When to Use
 When designing backend and frontend logic for syncing offline data.
@@ -35,19 +35,20 @@ For real-time concurrent editing.
 
 ## Rules & Constraints
 1. Backend is always authoritative.
-2. Field execution completion > administrative cancellation.
-3. Must log all conflicts in an audit log.
+2. An administrative cancellation remains authoritative when a later offline completion is synchronized. Preserve the submitted completion evidence and create a conflict record rather than changing the cancelled state.
+3. Only an authorized DISPATCHER or ADMIN may resolve the conflict, and the decision must be recorded in `audit_logs`.
 
 ## Step-by-Step Workflow
 1. Receive sync payload on backend.
 2. Compare timestamps and state machines.
-3. Apply conflict resolution rules.
-4. Return resolved state to client.
+3. If completion conflicts with cancellation, retain the server cancellation and create a conflict record for authorized resolution.
+4. Return the resolved state and conflict status to the client.
 5. Client updates Room DB to match server.
 
 ## Validation Checklist
 - [ ] Idempotency keys prevent duplicate operations.
 - [ ] Conflicts are logged.
+- [ ] Offline completion never silently changes a cancelled visit to completed.
 
 ## Common Mistakes
 - Client blindly forcing updates.
