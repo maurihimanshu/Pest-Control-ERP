@@ -4,6 +4,10 @@ description: Skill for local development docker-compose.yml.
 category: devops
 triggers:
   - setup local dev
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # devops-docker-compose-local

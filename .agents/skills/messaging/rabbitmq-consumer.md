@@ -7,7 +7,7 @@ triggers:
 inputs:
   - queues
 outputs:
-  - @RabbitListener
+  - "@RabbitListener"
 dependencies:
   - messaging-rabbitmq-publisher
 related_skills:

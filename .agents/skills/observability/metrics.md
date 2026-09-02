@@ -4,6 +4,10 @@ description: Skill for Micrometer metrics.
 category: observability
 triggers:
   - add metrics
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # observability-metrics

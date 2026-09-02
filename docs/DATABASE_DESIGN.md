@@ -347,7 +347,7 @@ CREATE TABLE payments (
     gateway_payment_id VARCHAR(150),
     amount NUMERIC(12, 2) NOT NULL,
     currency VARCHAR(10) NOT NULL DEFAULT 'INR',
-    status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'AUTHORIZED', 'PAID', 'FAILED', 'REFUNDED'
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'AUTHORIZED', 'PAID', 'PARTIAL', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED'
     idempotency_key VARCHAR(128) UNIQUE,
     paid_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -406,7 +406,8 @@ CREATE TABLE amc_schedules (
     scheduled_date DATE NOT NULL,
     visit_sequence INT NOT NULL, -- e.g. Visit 1 of 4
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'GENERATED_TO_WORK_ORDER', 'COMPLETED'
-    generated_work_order_id UUID REFERENCES work_orders(id) ON DELETE SET NULL
+    generated_work_order_id UUID REFERENCES work_orders(id) ON DELETE SET NULL,
+    CONSTRAINT uq_amc_schedule_contract_seq UNIQUE (amc_contract_id, visit_sequence)
 );
 ```
 
@@ -415,25 +416,32 @@ CREATE TABLE amc_schedules (
 ### 3.8 File Storage Metadata & Immutable Audit Trail
 
 ```sql
+-- Polymorphic File Metadata with Lifecycle Management
+-- Allowed entity_type: 'WORK_ORDER', 'SERVICE_VISIT', 'INVOICE', 'EXPENSE', 'CUSTOMER', 'EMPLOYEE'
+-- Allowed file_purpose: 'BEFORE_PHOTO', 'AFTER_PHOTO', 'SIGNATURE', 'INVOICE_PDF', 'RECEIPT', 'PROFILE_IMAGE'
 CREATE TABLE file_metadata (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agency_id UUID REFERENCES agencies(id),
+    agency_id UUID REFERENCES agencies(id) ON DELETE RESTRICT,
     entity_type VARCHAR(100) NOT NULL,
     entity_id UUID NOT NULL,
-    file_purpose VARCHAR(100) NOT NULL,  -- 'BEFORE_PHOTO', 'AFTER_PHOTO', 'SIGNATURE', 'INVOICE_PDF', 'RECEIPT'
-    storage_provider VARCHAR(50) NOT NULL,  -- 'AWS_S3', 'GCS', 'CLOUDFLARE_R2'
-    storage_key VARCHAR(1000) NOT NULL,
+    file_purpose VARCHAR(100) NOT NULL,
+    storage_provider VARCHAR(50) NOT NULL DEFAULT 'AWS_S3',  -- 'AWS_S3', 'GCS', 'MINIO'
+    storage_key VARCHAR(1000) NOT NULL UNIQUE,
     file_name VARCHAR(500),
     mime_type VARCHAR(100),
     file_size_bytes BIGINT,
     checksum_sha256 VARCHAR(64),
+    file_status VARCHAR(20) NOT NULL DEFAULT 'INITIATED', -- 'INITIATED', 'UPLOADING', 'UPLOADED', 'VERIFIED', 'ATTACHED', 'FAILED', 'ORPHANED'
     uploaded_by UUID REFERENCES users(id),
     access_policy VARCHAR(50) NOT NULL DEFAULT 'PRIVATE',  -- 'PRIVATE', 'AGENCY'
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_file_metadata_entity ON file_metadata(entity_type, entity_id);
 CREATE INDEX idx_file_metadata_agency ON file_metadata(agency_id);
+CREATE INDEX idx_file_metadata_status ON file_metadata(file_status, created_at);
 
+-- Immutable Append-Only Audit Trail
 CREATE TABLE audit_logs (
     id BIGSERIAL PRIMARY KEY,
     actor_id UUID REFERENCES users(id),
@@ -452,25 +460,48 @@ CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX idx_audit_logs_actor ON audit_logs(actor_id);
 CREATE INDEX idx_audit_logs_created ON audit_logs(created_at);
 
--- Availability Slots (for booking slot concurrency)
+-- Database-Level Immutability Enforcement for audit_logs
+CREATE OR REPLACE FUNCTION trg_audit_logs_immutable()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'audit_logs entries are strictly immutable and cannot be updated or deleted';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_audit_logs_no_update_delete
+BEFORE UPDATE OR DELETE ON audit_logs
+FOR EACH ROW EXECUTE FUNCTION trg_audit_logs_immutable();
+
+-- Availability Slots (Two-tier booking slot capacity model)
+-- employee_id IS NULL: Agency Capacity Pool for service category/territory (capacity >= 1)
+-- employee_id IS NOT NULL: Named Technician Calendar Schedule (capacity = 1)
 CREATE TABLE availability_slots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agency_id UUID REFERENCES agencies(id) ON DELETE RESTRICT,
-    employee_id UUID REFERENCES employees(id) ON DELETE RESTRICT,
+    agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+    service_category_id UUID REFERENCES service_categories(id) ON DELETE CASCADE,
+    employee_id UUID REFERENCES employees(id) ON DELETE SET NULL,
     service_date DATE NOT NULL,
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
-    capacity INTEGER NOT NULL DEFAULT 1,
-    booked_count INTEGER NOT NULL DEFAULT 0,
+    capacity INTEGER NOT NULL DEFAULT 1 CHECK (capacity >= 1),
+    booked_count INTEGER NOT NULL DEFAULT 0 CHECK (booked_count >= 0),
     is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_booked_count_nonneg CHECK (booked_count >= 0),
-    CONSTRAINT chk_booked_not_exceed_capacity CHECK (booked_count <= capacity)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_slot_capacity CHECK (booked_count <= capacity)
 );
+
+-- Unique index for Named Technician schedules (prevents overlapping assignments)
 CREATE UNIQUE INDEX uq_slot_employee_time
     ON availability_slots(employee_id, service_date, start_time)
-    WHERE is_blocked = FALSE;
-CREATE INDEX idx_availability_date ON availability_slots(agency_id, service_date);
+    WHERE employee_id IS NOT NULL;
+
+-- Unique index for Agency Capacity Pools
+CREATE UNIQUE INDEX uq_slot_agency_pool
+    ON availability_slots(agency_id, service_category_id, service_date, start_time)
+    WHERE employee_id IS NULL;
+
+CREATE INDEX idx_availability_agency_date ON availability_slots(agency_id, service_date);
 
 -- Coupon Redemptions (per-customer coupon usage tracking)
 CREATE TABLE coupon_redemptions (
@@ -478,9 +509,9 @@ CREATE TABLE coupon_redemptions (
     coupon_id UUID NOT NULL REFERENCES coupons(id) ON DELETE RESTRICT,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
     booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE RESTRICT,
-    redeemed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_coupon_per_customer UNIQUE (coupon_id, customer_id)
+    redeemed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX idx_coupon_redemptions_cust ON coupon_redemptions(coupon_id, customer_id);
 
 -- Payment Events (idempotent webhook event tracking)
 CREATE TABLE payment_events (
@@ -490,15 +521,17 @@ CREATE TABLE payment_events (
     gateway_event_id VARCHAR(255) NOT NULL,
     gateway_payment_id VARCHAR(255),
     event_type VARCHAR(100) NOT NULL,
-    payload_hash VARCHAR(64),
+    payload_hash VARCHAR(64) NOT NULL,
+    raw_payload JSONB,
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     processed_at TIMESTAMPTZ,
     processing_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    error_message TEXT,
     CONSTRAINT uq_payment_event UNIQUE (provider, gateway_event_id)
 );
 CREATE INDEX idx_payment_events_payment_id ON payment_events(payment_id);
 
--- Outbox Events (reliable domain event publication)
+-- Outbox Events (reliable domain event publication via transactional outbox)
 CREATE TABLE outbox_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_type VARCHAR(100) NOT NULL,
@@ -515,16 +548,41 @@ CREATE TABLE outbox_events (
 CREATE INDEX idx_outbox_pending ON outbox_events(publication_status, created_at)
     WHERE publication_status = 'PENDING';
 
--- Idempotency Keys (API request deduplication)
+-- Offline Sync Conflicts (technician offline conflict resolution tracking)
+CREATE TABLE sync_conflicts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id UUID NOT NULL,
+    operation_id UUID NOT NULL,
+    agency_id UUID NOT NULL REFERENCES agencies(id),
+    entity_type VARCHAR(100) NOT NULL, -- 'SERVICE_VISIT', 'WORK_ORDER'
+    entity_id UUID NOT NULL,
+    conflict_type VARCHAR(50) NOT NULL, -- 'CLIENT_OVERRIDE_ON_CANCELLED', 'STALE_STATE_COLLISION'
+    client_state JSONB NOT NULL,
+    server_state JSONB NOT NULL,
+    resolution_status VARCHAR(50) NOT NULL DEFAULT 'OPEN', -- 'OPEN', 'AUTO_RESOLVED', 'MANUALLY_RESOLVED'
+    resolved_by UUID REFERENCES users(id),
+    resolution_notes TEXT,
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    resolved_at TIMESTAMPTZ
+);
+CREATE INDEX idx_sync_conflicts_agency ON sync_conflicts(agency_id, resolution_status);
+
+-- Idempotency Keys (API request deduplication with payload fingerprinting)
 CREATE TABLE idempotency_keys (
     key VARCHAR(255) PRIMARY KEY,
+    tenant_id UUID REFERENCES agencies(id),
     user_id UUID NOT NULL REFERENCES users(id),
+    http_method VARCHAR(10) NOT NULL,
     request_path VARCHAR(500) NOT NULL,
-    response_status INT NOT NULL,
+    request_hash VARCHAR(64) NOT NULL, -- SHA-256 of request body
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'COMPLETED', 'FAILED'
+    response_status INT,
+    response_headers JSONB,
     response_body JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours'
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours')
 );
+CREATE INDEX idx_idempotency_lookup ON idempotency_keys(tenant_id, user_id, request_path, key);
 CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
 ```
 

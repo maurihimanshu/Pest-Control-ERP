@@ -51,8 +51,8 @@ For small JSON sync payloads.
 - Uploading large images directly to the API, eating memory.
 
 ## Example Usage
-```kotlin
-// Pre-signed URL fetch
+```java
+// Pre-signed URL fetch (Java 21)
 ```
 
 ## Related Skills

@@ -7,7 +7,7 @@ triggers:
 inputs:
   - services
 outputs:
-  - @Cacheable annotations
+  - "@Cacheable annotations"
 dependencies: []
 related_skills:
   - caching-cache-invalidation

@@ -40,7 +40,7 @@ For immediate user-facing network calls that don't need offline support.
 3. Implement partial sync for large queues.
 
 ## Step-by-Step Workflow
-1. Create `SyncWorker` extending `CoroutineWorker`.
+1. Create `SyncWorker` extending `Worker` (or `ListenableWorker` for asynchronous execution in Java).
 2. Fetch pending operations from Room.
 3. Send to `/api/v1/dispatch/visits/sync`.
 4. Update local statuses based on server response.
@@ -54,8 +54,8 @@ For immediate user-facing network calls that don't need offline support.
 - Failing to handle partial successes.
 
 ## Example Usage
-```kotlin
-// SyncWorker implementation
+```java
+// SyncWorker implementation (Java 21)
 ```
 
 ## Related Skills

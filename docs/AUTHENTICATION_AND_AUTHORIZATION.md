@@ -131,11 +131,23 @@ public ServiceVisitResponse completeVisit(UUID visitId, CompleteVisitRequest req
 
 ---
 
-## 5. Session Invalidation & Account Revocation
+---
 
-* **Instant Session Revocation:** When an employee or customer account is deactivated in PostgreSQL (`users.is_active = false`), the `FirebaseAuthenticationFilter` rejects subsequent requests immediately, even if the client's Firebase JWT has not reached its 1-hour expiration.
-* **Token Refresh Lifecycle:** Mobile clients automatically refresh Firebase tokens every 55 minutes using the Firebase Client SDK.
+## 6. Technician Device Lifecycle & Local Data Security
+
+### 6.1 Technician Device Identity & Registration Lifecycle
+To prevent unauthorized offline replay attacks and credential sharing:
+1. **Device Enrollment:** When a Field Technician signs in, the app transmits the physical hardware UUID to `POST /api/v1/auth/device/register`.
+2. **Single Active Device Policy:** The platform enforces a strict single active device per technician constraint. Registering a replacement phone automatically revokes the previous device registration.
+3. **Lost Device / Instant Revocation:** If a phone is lost or compromised, an Agency Manager or Admin marks the device `REVOKED` in the Admin ERP, which immediately blocks all sync endpoints (`POST /api/v1/dispatch/visits/sync`) and triggers a remote wipe command.
+
+### 6.2 SQLCipher & Android Keystore Key Lifecycle
+1. **Hardware-Backed Master Key:** The Technician Mobile App generates a 256-bit AES cipher key stored exclusively in the **Android Keystore System** (`AndroidKeyStore` provider).
+2. **Local Room Encryption:** SQLite databases are encrypted at rest using SQLCipher with the Keystore master key.
+3. **Automated Local Wipe:**
+   - On explicit technician logout: All cached offline visit data and session tokens are purged from Room.
+   - On remote session revocation / tampering detection (Play Integrity failure): The app executes a complete local database file destruction.
 
 ---
 
-*Governed by Spring Security 6 standards and enterprise identity protocols.*
+*Governed by Spring Security 6 standards, Android Keystore hardware security, and enterprise identity protocols.*

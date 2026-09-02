@@ -4,6 +4,10 @@ description: High-level orchestration skill for code review.
 category: workflows
 triggers:
   - review code
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # workflows-code-review

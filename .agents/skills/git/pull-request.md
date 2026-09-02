@@ -4,6 +4,10 @@ description: Skill for PR preparation.
 category: git
 triggers:
   - open pr
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # git-pull-request

@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-005, docs/AMC_ARCHITECTURE.md, docs/CONCURRENCY_AND_IDEMPOTENCY.md
+**Affected Artifacts:** docs/AMC_ARCHITECTURE.md, docs/CONCURRENCY_AND_IDEMPOTENCY.md, docs/DATABASE_DESIGN.md
 
 ## Context
 Annual Maintenance Contracts require automatic recurring visit scheduling.

@@ -4,6 +4,10 @@ description: Skill for Flyway migration in CI/CD.
 category: devops
 triggers:
   - setup flyway
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # devops-database-migration-deployment

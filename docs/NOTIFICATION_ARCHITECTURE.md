@@ -44,20 +44,20 @@ The notification subsystem is completely decoupled from synchronous request proc
 
 ## 2. Supported Channels & Event Mapping
 
-| Domain Event | Customer Channel | Technician Channel | Admin Channel |
+| Domain Event (PascalCase) | Customer Channel | Technician Channel | Admin Channel |
 | :--- | :--- | :--- | :--- |
-| `booking.confirmed` | FCM Push + SMS confirmation | — | Web Dashboard Alert |
-| `workorder.assigned`| — | High-Priority FCM Push + Sound | Web Dashboard Update |
-| `technician.en_route`| FCM Push (*"Tech is on the way"*) | — | Live Dispatch Map |
-| `visit.completed` | FCM Push + Email (with PDF Invoice)| FCM Completion Badge | Web Summary |
-| `payment.failed` | FCM Push + SMS retry link | — | High-Priority Alert |
-| `amc.due_reminder` | FCM Push + WhatsApp reminder | — | Scheduled List |
+| `BookingConfirmed` | FCM Push + SMS confirmation | — | Web Dashboard Alert |
+| `TechnicianAssigned` | — | High-Priority FCM Push + Sound | Web Dashboard Update |
+| `TechnicianEnRoute` | FCM Push (*"Tech is on the way"*) | — | Live Dispatch Map |
+| `ServiceVisitCompleted` | FCM Push + Email (with PDF Invoice)| FCM Completion Badge | Web Summary |
+| `PaymentFailed` | FCM Push + SMS retry link | — | High-Priority Alert |
+| `AMCVisitDueReminder` | FCM Push + WhatsApp reminder | — | Scheduled List |
 
 ---
 
 ## 3. Firebase Cloud Messaging (FCM) Integration
 
-* **Direct Device Targeting:** User device tokens are stored in `user_device_tokens` table and refreshed on login.
+* **Direct Device Targeting:** User device tokens are stored in `device_tokens` table and refreshed on login.
 * **FCM Topics:**
   * `broadcast_all_technicians`: Emergency operational alerts.
   * `agency_{agencyId}_dispatch`: Branch-wide notifications.
@@ -71,15 +71,34 @@ The notification subsystem is completely decoupled from synchronous request proc
 * **PDF Attachments:** Generated invoice PDFs are attached directly to completion emails.
 * **Transactional SMS:** Formatted according to regional regulatory templates (e.g., India DLT approved formats).
 
-## Notification Persistence
+---
 
-Important notifications (booking confirmation, payment receipt, technician assignment) are persisted to the `notifications` table in PostgreSQL BEFORE being dispatched. This provides:
-- Delivery retry capability (if FCM/SMS fails, notification record exists for re-delivery)
-- Notification history for the customer app ("Your Notifications" feed)
-- Audit trail for regulatory/dispute purposes
+## 5. Notification Persistence & Outbox Integration
 
-Ephemeral/low-value notifications (promotional, marketing) may be fire-and-forget without persistence.
+Important notifications (booking confirmation, payment receipt, technician assignment) are persisted to the `notifications` table in PostgreSQL before or during dispatch. This provides:
+- Delivery retry capability (if FCM/SMS fails, notification record exists for re-delivery).
+- Notification history for the customer app ("Your Notifications" feed).
+- Audit trail for regulatory and dispute purposes.
 
 ---
 
-*Governed by event-driven asynchronous processing and reliable messaging standards.*
+## 6. Notification Provider Abstraction Architecture
+
+To isolate the domain from third-party vendor APIs, the notification module uses a provider port-and-adapter architecture:
+
+```text
+[ Notification Service ]
+           │
+           ▼
+[ NotificationChannelPort ]
+           │
+           ├──► FcmPushProviderAdapter       (Firebase Admin SDK HTTP v1)
+           ├──► SmsProviderAdapter           (Twilio / MSG91 DLT compliant)
+           ├──► EmailProviderAdapter         (SendGrid / Resend via SMTP/REST)
+           └──► WhatsAppProviderAdapter      (Meta WhatsApp Cloud API)
+```
+
+* **Provider Selection Strategy:**
+  - **Configuration-Driven:** Active provider per channel is configured in `application.yml` (e.g. `notification.sms.active-provider=msg91`).
+  - **Fallback-Driven:** If primary push notification (FCM) fails to deliver within 5 minutes for a critical operational event (`BookingConfirmed`), the system automatically falls back to transactional SMS dispatch.
+

@@ -97,7 +97,7 @@ The Android apps use Firebase App Check with the Play Integrity API provider to 
 
 ### 4.3 Personally Identifiable Information (PII) Redaction
 * Customer phone numbers are masked when viewed in general reporting dashboards.
-* Exact customer home addresses are hidden from technicians until the job status transitions to `TECHNICIAN_ACCEPTED` or `ON_THE_WAY`.
+* Exact customer home addresses are hidden from technicians until the job status transitions to `ACCEPTED` or `ON_THE_WAY`.
 
 ---
 
@@ -106,7 +106,7 @@ The Android apps use Firebase App Check with the Play Integrity API provider to 
 To prevent client-side parameter tampering (e.g., modifying service rates, applying invalid coupon discounts, or skipping workflow steps):
 
 1. **Server-Calculated Billing:** The client application transmits only `{ serviceId, pricingTier, couponCode }`. The Spring Boot `PricingService` fetches verified base rates from PostgreSQL and calculates totals on the server.
-2. **Strict State Machine Transitions:** Bookings cannot transition to illegal states (e.g., `CONFIRMED` $\rightarrow$ `SERVICE_COMPLETED` without technician check-in). Transitions are guarded by transactional domain services.
+2. **Strict State Machine Transitions:** Bookings cannot transition to illegal states (e.g., `CONFIRMED` $\rightarrow$ `COMPLETED` without completed field service visits). Transitions are guarded by transactional domain services.
 3. **Database Security Constraints:** Foreign keys and check constraints ensure data integrity even in the event of software errors.
 
 ---

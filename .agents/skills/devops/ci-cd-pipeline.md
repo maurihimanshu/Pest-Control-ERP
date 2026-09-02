@@ -4,6 +4,10 @@ description: Skill for GitHub Actions CI/CD.
 category: devops
 triggers:
   - setup ci
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # devops-ci-cd-pipeline

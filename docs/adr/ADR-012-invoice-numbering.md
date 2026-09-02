@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-002, ADR-010, docs/PAYMENT_ARCHITECTURE.md, docs/DATABASE_DESIGN.md
+**Affected Artifacts:** docs/PAYMENT_ARCHITECTURE.md, docs/DATABASE_DESIGN.md
 
 ## Context
 Need sequential, unique, non-repeatable invoice numbers for financial/legal compliance.

@@ -4,6 +4,10 @@ description: Orchestration skill for architecture changes.
 category: workflows
 triggers:
   - change architecture
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # workflows-architecture-change

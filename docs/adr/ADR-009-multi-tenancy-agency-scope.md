@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-002, ADR-008, docs/CONCURRENCY_AND_IDEMPOTENCY.md, docs/ARCHITECTURE.md
+**Affected Artifacts:** docs/CONCURRENCY_AND_IDEMPOTENCY.md, docs/DATABASE_DESIGN.md, docs/TESTING_STRATEGY.md
 
 ## Context
 Pest control company has multiple city/regional branches. Not a SaaS platform serving independent companies.

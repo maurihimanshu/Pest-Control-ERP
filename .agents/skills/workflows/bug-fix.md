@@ -4,6 +4,10 @@ description: High-level orchestration skill for bug fixes.
 category: workflows
 triggers:
   - fix bug
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # workflows-bug-fix

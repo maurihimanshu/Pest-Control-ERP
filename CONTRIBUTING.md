@@ -101,8 +101,8 @@ We follow **Git Flow** with strict branch protection rules on `main` and `stagin
 ## 4.2 Android Applications (Customer & Technician)
 
 * **Architecture:** MVVM (Model-View-ViewModel) + Repository Pattern + Clean Domain Use Cases.
-* **Build System:** Gradle with **Kotlin DSL (`build.gradle.kts`)**.
-* **Target & Compile SDK:** Compile SDK 34/35, Min SDK 24 (Android 7.0+).
+* **Build System:** Gradle (AGP 8.5+, Gradle 8.7+).
+* **Language & SDK:** Java 21 with Core Library Desugaring, Compile SDK 34/35, Target SDK 34/35, Min SDK 26 (Android 8.0+).
 * **Dependency Injection:** Hilt / Dagger for all view models and repositories.
 * **UI & Views:** ViewBinding / Jetpack Compose; zero `findViewById()` usage.
 * **Resources:**

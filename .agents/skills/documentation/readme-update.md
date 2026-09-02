@@ -4,6 +4,10 @@ description: Skill for updating README.md.
 category: documentation
 triggers:
   - update readme
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # documentation-readme-update

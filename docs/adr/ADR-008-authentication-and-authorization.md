@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-003, ADR-009, docs/AUTHENTICATION_AND_AUTHORIZATION.md, docs/RBAC_AND_PERMISSIONS.md
+**Affected Artifacts:** docs/AUTHENTICATION_AND_AUTHORIZATION.md, docs/RBAC_AND_PERMISSIONS.md, SECURITY.md
 
 ## Context
 Mobile apps need Firebase phone OTP and Google Sign-In. Backend needs RBAC from a relational model.

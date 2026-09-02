@@ -14,10 +14,29 @@
 ### 1.1 Content Negotiation & Standards
 * **Protocol:** HTTPS only (TLS 1.3).
 * **Data Format:** `application/json; charset=UTF-8` for all request/response bodies.
-* **Date-Time Format:** ISO 8601 UTC strings (e.g., `2026-09-01T14:30:00Z`).
-* **Monetary Values:** Represented in standard 2-decimal numbers (e.g., `1499.00`).
-* **Idempotency:** State-mutating `POST` and `PUT` endpoints accept an optional/required header:  
-  `Idempotency-Key: <UUID>`
+* **Date-Time & Calendar Semantics:**
+  - **UTC Instants (`Instant` / `TIMESTAMPTZ`):** Formatted as ISO 8601 UTC strings with trailing 'Z' (e.g., `2026-09-01T14:30:00Z`). Used for event timestamps, audit logs, creation/update times, and token expirations.
+  - **Business Dates (`LocalDate` / `DATE`):** Formatted as ISO 8601 calendar dates `YYYY-MM-DD` (e.g., `2026-09-01`). Used for appointment booking dates, batch expiry dates, and AMC contract schedules.
+  - **Local Operating Timezone:** Resolved per agency/branch (`agencies.timezone`, default `Asia/Kolkata`) for calendar scheduling, shift calculation, and daily cron trigger evaluation.
+* **Canonical Monetary Contract:**
+  - Monetary values are represented in JSON with an explicit decimal amount and 3-letter ISO 4217 currency code:
+    ```json
+    {
+      "amount": 1499.00,
+      "currency": "INR"
+    }
+    ```
+  - Server-side mapping uses Java `BigDecimal` with scale 2 (`RoundingMode.HALF_UP`). Database columns strictly use PostgreSQL `NUMERIC(12, 2)`.
+* **Idempotency Policy (`Idempotency-Key` Header):**
+  - **REQUIRED:** All state-mutating `POST` endpoints with externally retryable side effects:
+    - `POST /api/v1/bookings`
+    - `POST /api/v1/payments/initiate`
+    - `POST /api/v1/amc/contracts`
+    - `POST /api/v1/dispatch/visits/sync`
+    - `POST /api/v1/invoices`
+  - **OPTIONAL:** `PUT` / `PATCH` endpoints that are naturally idempotent.
+  - **FORBIDDEN / IGNORED:** `GET`, `HEAD`, `DELETE` where HTTP semantics already define safe/idempotent execution.
+  - Duplicate requests matching `(tenant_id, user_id, request_path, request_hash)` within 24 hours return the exact cached response body without re-execution.
 
 ---
 

@@ -4,6 +4,10 @@ description: Skill for correlation/trace IDs.
 category: observability
 triggers:
   - trace ids
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # observability-correlation-ids

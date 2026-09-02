@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-005, docs/CONCURRENCY_AND_IDEMPOTENCY.md, docs/OFFLINE_SYNC.md
+**Affected Artifacts:** docs/OFFLINE_SYNC.md, docs/CONCURRENCY_AND_IDEMPOTENCY.md, docs/DATABASE_DESIGN.md
 
 ## Context
 Field technicians operate in areas with poor connectivity. Data must not be lost. Cryptographic signing adds key management complexity not justified for V1.

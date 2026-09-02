@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-002, ADR-007, docs/PAYMENT_ARCHITECTURE.md, docs/CONCURRENCY_AND_IDEMPOTENCY.md
+**Affected Artifacts:** docs/PAYMENT_ARCHITECTURE.md, docs/CONCURRENCY_AND_IDEMPOTENCY.md, docs/DATABASE_DESIGN.md
 
 ## Context
 Handling payments requires robust defense against duplicate processing or fraudulent client declarations.

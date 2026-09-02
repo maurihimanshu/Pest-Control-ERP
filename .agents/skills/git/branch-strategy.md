@@ -4,6 +4,10 @@ description: Skill for Git branching.
 category: git
 triggers:
   - create branch
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # git-branch-strategy

@@ -4,6 +4,10 @@ description: Skill for secrets management.
 category: devops
 triggers:
   - manage secrets
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # devops-secrets-management

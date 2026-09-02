@@ -63,8 +63,8 @@ The Service Visit is heavily tied to the Technician Mobile App, which operates o
 *   JSONB is critical here for the flexible `checklist` and `materials_used` arrays.
 *   Expect bursts of writes when a technician regains network connectivity.
 
-## RabbitMQ Events
-*   `ServiceVisitCompletedEvent` -> Triggers Work Order status evaluation and Inventory deduction process.
+## RabbitMQ Events (Published via Transactional Outbox)
+*   `ServiceVisitCompletedEvent` -> Triggers Work Order status evaluation, invoice preparation, downstream notifications, and post-commit low stock checks (Note: Inventory deduction is executed strictly within the PostgreSQL visit completion transaction, NOT via RabbitMQ).
 
 ## Validation Checklist
 - [ ] Does it handle delayed synchronization gracefully?

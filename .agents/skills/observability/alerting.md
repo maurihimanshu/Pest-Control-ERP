@@ -4,6 +4,10 @@ description: Skill for alerting rules.
 category: observability
 triggers:
   - setup alerts
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # observability-alerting

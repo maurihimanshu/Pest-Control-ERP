@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-004, docs/DOMAIN_MODEL.md, docs/BOOKING_STATE_MACHINE.md
+**Affected Artifacts:** docs/DOMAIN_MODEL.md, docs/BOOKING_STATE_MACHINE.md, docs/DATABASE_DESIGN.md
 
 ## Context
 Pest control involves complex job lifecycles — initial treatment, failed visit, warranty re-visit, AMC recurring visit. Collapsing these into a single entity leads to corrupt state.

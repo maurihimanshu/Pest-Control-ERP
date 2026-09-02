@@ -4,6 +4,10 @@ description: Skill for Spring Actuator health checks.
 category: devops
 triggers:
   - setup health checks
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # devops-health-checks

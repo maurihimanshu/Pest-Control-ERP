@@ -4,6 +4,10 @@ description: Reusable definition-of-done skill.
 category: workflows
 triggers:
   - done
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # workflows-definition-of-done

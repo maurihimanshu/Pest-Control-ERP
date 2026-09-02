@@ -20,13 +20,13 @@
 
 ---
 
-# 1. Executive Summary & Cost Philosophy
+> **PLANNING ESTIMATES NOTICE:** All figures in this document represent baseline engineering planning estimates, not formal vendor contractual quotations. Actual commercial operating costs will vary based on selected cloud regions, High Availability (HA) topologies, data retention policies, and negotiated third-party API volume pricing.
 
-The **Pest Control ERP Platform** runs as a containerized Spring Boot Modular Monolith backed by PostgreSQL, Redis, and RabbitMQ.
-
-### Key Cost Advantages:
+### Key Cost & Architecture Assumptions:
 * **Predictable VPS / Cloud Hosting:** Core application containers and database run on predictable, fixed-cost cloud compute rather than unpredictable pay-per-execution serverless billing.
-* **Provider-Neutral Storage:** Object storage for photos and invoices uses cost-effective S3-compatible storage ($0.015–$0.025 / GB / month).
+* **High Availability (HA) Evolution:** Stage 1–2 assume single-node managed database with automated daily snapshots. Stages 3–4 budget for active-standby PostgreSQL replication, Redis Sentinel failover, and clustered RabbitMQ nodes.
+* **Provider-Neutral Storage & Egress:** Object storage for photos and invoices uses cost-effective S3-compatible storage ($0.015–$0.025 / GB / month) with pre-upload WebP compression (< 500 KB) keeping egress bandwidth minimal.
+* **Retention Policies:** Operational logs (Prometheus/Loki) are retained for 30 days hot storage; PostgreSQL WAL archives and invoice PDFs are retained for 7 years on cold/archival tiers.
 * **Minimal Third-Party SaaS:** Push notifications (FCM) are free; Google Maps costs are offset by the $200 recurring monthly credit.
 
 ---

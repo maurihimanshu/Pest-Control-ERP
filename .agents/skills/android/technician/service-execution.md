@@ -53,8 +53,8 @@ For admin-side operations.
 - Allowing invalid state transitions (e.g., STARTED to ON_THE_WAY).
 
 ## Example Usage
-```kotlin
-// Status update
+```java
+// Status update (Java 21)
 ```
 
 ## Related Skills

@@ -4,6 +4,10 @@ description: Skill for keeping documentation synchronized.
 category: documentation
 triggers:
   - sync docs
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # documentation-documentation-sync

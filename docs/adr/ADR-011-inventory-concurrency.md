@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-002, ADR-005, ADR-007, docs/INVENTORY_AND_CHEMICALS.md, docs/CONCURRENCY_AND_IDEMPOTENCY.md
+**Affected Artifacts:** docs/INVENTORY_AND_CHEMICALS.md, docs/CONCURRENCY_AND_IDEMPOTENCY.md
 
 ## Context
 Multiple technicians may simultaneously try to use from the same chemical batch. Must prevent negative inventory without application-level race conditions.

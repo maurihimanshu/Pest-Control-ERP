@@ -7,7 +7,7 @@ triggers:
 inputs:
   - update methods
 outputs:
-  - @CacheEvict logic
+  - "@CacheEvict logic"
 dependencies: []
 related_skills:
   - caching-redis-caching

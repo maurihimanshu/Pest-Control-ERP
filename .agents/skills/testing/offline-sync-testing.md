@@ -4,6 +4,10 @@ description: Skill for testing offline sync.
 category: testing
 triggers:
   - test offline sync
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # testing-offline-sync-testing

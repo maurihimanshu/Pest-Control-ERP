@@ -4,6 +4,10 @@ description: Skill for structured logging.
 category: observability
 triggers:
   - setup logging
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # observability-structured-logging

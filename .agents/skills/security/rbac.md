@@ -9,7 +9,7 @@ inputs:
   - user roles
   - endpoint requirements
 outputs:
-  - @PreAuthorize annotations
+  - "@PreAuthorize annotations"
   - Method security config
 dependencies:
   - spring-security-config

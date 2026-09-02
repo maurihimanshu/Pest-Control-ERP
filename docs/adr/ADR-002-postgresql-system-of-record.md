@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-001, ADR-003, ADR-011, docs/DATABASE_DESIGN.md
+**Affected Artifacts:** docs/DATABASE_DESIGN.md, docs/CONCURRENCY_AND_IDEMPOTENCY.md
 
 ## Context
 ERP data requires ACID transactions, relational integrity, complex queries, and reliable audit trails.

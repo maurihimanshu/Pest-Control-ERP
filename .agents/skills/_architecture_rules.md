@@ -68,15 +68,27 @@ Supporting External Services (NOT core ERP):
 
 ### 18 Domain Modules
 
+Refer to the canonical module registry in [`docs/MODULE_CATALOG.md`](../../docs/MODULE_CATALOG.md).
+
+## 2. Taxonomy Clarification & Modular Architecture
+
+### Skill Taxonomy vs. Code Module Taxonomy
+* **Skill Taxonomy (Conceptual Guides):** The repository contains 96 developer workflow skills categorized into 16 conceptual areas (`architecture`, `backend`, `database`, `domain`, `security`, `android`, `admin`, `api`, `messaging`, `caching`, `testing`, `devops`, `observability`, `documentation`, `git`, `workflows`). These are developer assistance guides, NOT code packages.
+* **Code Module Taxonomy (18 Java Packages):** The Spring Boot backend codebase is strictly organized into 18 bounded domain modules under `com.pestcontrol.modules.*`:
+  `auth`, `users`, `customers`, `employees`, `agencies`, `catalog`, `bookings`, `dispatch`, `payments`, `inventory`, `expenses`, `amc`, `notifications`, `support`, `files`, `reporting`, `audit`, `outbox`.
+
+### Redis Role Clarification
+* **PostgreSQL is the Sole Authority:** All transactional invariants, booking slot deductions, inventory decrements, and payment states are guaranteed by PostgreSQL ACID transactions with pessimistic row locking (`SELECT FOR UPDATE`).
+* **Redis as an Optimization Pre-Lock:** Redis / Redisson is strictly an optional high-throughput pre-lock and caching coordination layer. Under no circumstances is business correctness or state integrity delegated to Redis.
+
 ```
 com.pestcontrol.modules.
-├── auth          ├── scheduling    ├── expenses
-├── users         ├── dispatch      ├── inventory
-├── customers     ├── payments      ├── amc
-├── employees     ├── invoices      ├── notifications
-├── agencies      ├── support       ├── reports
-├── services      ├── pricing       └── audit
-└── bookings
+├── auth          ├── bookings      ├── notifications
+├── users         ├── dispatch      ├── support
+├── customers     ├── payments      ├── files
+├── employees     ├── inventory     ├── reporting
+├── agencies      ├── expenses      ├── audit
+└── catalog       └── amc           └── outbox
 ```
 
 ---
@@ -148,9 +160,10 @@ Spring Security RBAC
 - Contains: arrival_time, start_time, end_time, checklist JSONB, chemicals, photos[], GPS, signature, notes
 - Supports: rescheduling, warranty visits, AMC recurring visits, multi-technician
 
-### Payment State Machine
-- `PENDING` → `AUTHORIZED` → `PAID` | `PARTIAL` | `FAILED`
-- `PAID` → `REFUNDED` | `PARTIALLY_REFUNDED`
+### Payment State Machine (PaymentStatus)
+- Authoritative lifecycle: `PENDING`, `AUTHORIZED`, `PAID`, `PARTIAL`, `FAILED`, `REFUNDED`, `PARTIALLY_REFUNDED`
+- Normalization: `PENDING` → `AUTHORIZED` (funds held) → `PAID` (captured) | `PARTIAL` | `FAILED`
+- Reversals: `PAID` | `PARTIAL` → `REFUNDED` | `PARTIALLY_REFUNDED`
 
 ---
 
@@ -169,29 +182,32 @@ Spring Security RBAC
 
 ---
 
-## 7. RabbitMQ Rules
+## 7. RabbitMQ & Messaging Rules
 
 | Allowed | Forbidden |
 |:---|:---|
-| Decoupled async domain events | Synchronous request-response (use REST) |
-| Notification dispatch (FCM/SMS/Email) | Storing business state |
-| Invoice generation trigger | Replacing PostgreSQL ACID transactions |
-| Inventory deduction trigger | Ordering without outbox pattern |
+| Decoupled async domain event delivery | Direct publishing from business transactions (MUST use outbox) |
+| Notification dispatch (FCM/SMS/Email) | Synchronous request-response (use REST) |
+| Async invoice generation trigger | Storing business state |
+| Low stock alerts & replenishment triggers (AFTER DB commit) | Authoritative inventory deduction (deduction is PostgreSQL transactional) |
+
+### Outbox Pattern — Sole Publication Authority
+- **No Direct Broker Publishing**: Business `@Transactional` methods NEVER publish directly to RabbitMQ.
+- **Transactional Commit**: Business entity mutations + `outbox_events` insert occur in the SAME PostgreSQL transaction.
+- **Relay Mechanism**: An independent outbox polling service (`SELECT ... FOR UPDATE SKIP LOCKED`) reads pending rows, publishes to RabbitMQ, and marks them `PUBLISHED`.
+- **Consumer Idempotency**: All consumers MUST be idempotent and handle duplicate deliveries gracefully.
+- Every queue MUST have a **Dead Letter Exchange (DLX)** configured.
+- Standard event envelope: `{ eventId, eventType, aggregateType, aggregateId, occurredAt, version, payload }`
 
 ### Standard Domain Events
 
 ```
-BookingCreated      WorkOrderCreated      PaymentCompleted
-BookingConfirmed    TechnicianAssigned    InvoiceGenerated
-BookingCancelled    TechnicianAccepted    NotificationRequested
-                    ServiceStarted        AMCVisitGenerated
-                    ServiceCompleted
+BookingCreated      WorkOrderCreated      PaymentInitiated      InvoiceGenerated
+BookingConfirmed    TechnicianAssigned    PaymentAuthorized     NotificationRequested
+BookingCancelled    TechnicianAccepted    PaymentCompleted      AMCVisitGenerated
+BookingCompleted    ServiceStarted        PaymentFailed         LowStockAlert
+BookingClosed       ServiceCompleted      PaymentRefunded
 ```
-
-- Use **Outbox Pattern** for reliable event publication
-- All consumers MUST be **idempotent** — duplicate events must be harmless
-- Every queue MUST have a **Dead Letter Exchange (DLX)** configured
-- Event format: `{ eventId, eventType, occurredAt, version, payload }`
 
 ---
 
@@ -226,7 +242,27 @@ Technician Android (offline-capable)
 
 ---
 
-## 10. Agent Safety Rules
+## 10. Multi-Tenancy & Repository Rules
+
+1. **NO Generic `findById(UUID id)` for Agency Entities:** Any entity owned by an agency (`work_orders`, `service_visits`, `inventory`, `expenses`, `support_tickets`) MUST be queried with explicit agency scoping: `findByIdAndAgencyId(UUID id, UUID agencyId)`.
+2. **Automated Cross-Tenant IDOR Tests:** Every agency-scoped resource endpoint must include automated integration tests asserting HTTP `403 Forbidden` / `404 Not Found` when accessed by another agency's user.
+
+---
+
+## 11. Positive Architectural Assertions — Always Enforce
+
+```
+✅ Every payment status update MUST be executed server-side within a PostgreSQL ACID transaction.
+✅ Every inventory deduction MUST occur within the Service Visit completion transaction.
+✅ Every domain event MUST be committed to outbox_events before message broker relay.
+✅ Every mutating external POST endpoint MUST support Idempotency-Key request deduplication.
+✅ Every agency-scoped query MUST filter by agency_id from the authenticated user's profile.
+✅ Every multi-instance background job MUST acquire a PostgreSQL advisory lock.
+```
+
+---
+
+## 12. Agent Safety Rules
 
 | Rule | Requirement |
 |:---|:---|
@@ -241,7 +277,7 @@ Technician Android (offline-capable)
 
 ---
 
-## 11. Forbidden Patterns — Flag Immediately
+## 13. Forbidden Patterns — Flag Immediately
 
 ```
 ❌ FirebaseFirestore.getInstance()
@@ -255,4 +291,6 @@ Technician Android (offline-capable)
 ❌ client.send({ paymentSuccess: true })           // client claiming payment success
 ❌ new AtomicInteger() for invoice numbering       // use PostgreSQL SEQUENCE
 ❌ @Service class communicating directly with another module's @Repository
+❌ findById(id) on agency-scoped entities without agencyId check
 ```
+

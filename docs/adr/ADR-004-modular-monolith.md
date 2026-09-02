@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-001, docs/MODULE_CATALOG.md, docs/ARCHITECTURE.md
+**Affected Artifacts:** docs/MODULE_CATALOG.md, docs/ARCHITECTURE.md, .agents/skills/_architecture_rules.md
 
 ## Context
 Team size, complexity, initial scale don't justify distributed microservices. Modules: auth, users, customers, employees, agencies, services, pricing, bookings, scheduling, dispatch, payments, invoices, expenses, inventory, amc, notifications, support, reports, audit.

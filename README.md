@@ -64,6 +64,7 @@ All detailed specifications, architecture designs, database DDL schemas, API con
 | Document | Description | Direct Link |
 | :--- | :--- | :--- |
 | 🏛️ **Architecture (Canonical)** | Primary architectural reference — all modules, boundaries, decisions. | [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) |
+| 📦 **Module Catalog (Canonical)** | Master 18-module taxonomy, boundaries, owned tables, public APIs & event contracts. | [`docs/MODULE_CATALOG.md`](./docs/MODULE_CATALOG.md) |
 | 🗂️ **Domain Model (Canonical)** | Entities, aggregates, state machines, invariants, business rules. | [`docs/DOMAIN_MODEL.md`](./docs/DOMAIN_MODEL.md) |
 | 🔐 **RBAC & Permissions** | Single source of truth for all roles and permissions. | [`docs/RBAC_AND_PERMISSIONS.md`](./docs/RBAC_AND_PERMISSIONS.md) |
 | ⚛️ **Concurrency & Idempotency** | Slot locking, inventory, payment webhook, offline sync, outbox. | [`docs/CONCURRENCY_AND_IDEMPOTENCY.md`](./docs/CONCURRENCY_AND_IDEMPOTENCY.md) |

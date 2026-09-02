@@ -1,15 +1,16 @@
 # Payment & Invoicing Architecture Specification
-## Gateway Integration, Webhook Verification & Automated Invoicing
+## Gateway Integration, Webhook Deduplication & Automated Invoicing
 
-**Document Version:** 1.0.0  
+**Document Version:** 2.0.0  
 **Payment Gateways:** Razorpay / Stripe (Multi-Gateway Ready)  
-**PDF Engine:** OpenPDF / iText inside Spring Boot  
+**PDF Engine:** OpenPDF inside Spring Boot  
 **Transactional Store:** PostgreSQL 16  
+**Reference:** [`docs/CONCURRENCY_AND_IDEMPOTENCY.md`](CONCURRENCY_AND_IDEMPOTENCY.md)  
 **Date:** September 2026  
 
 ---
 
-## 1. Payment Processing Architecture
+## 1. Zero-Trust Payment Architecture
 
 The payment architecture adheres to a strict **Zero-Trust Client** model: mobile and web clients are never trusted to declare that a payment has succeeded. All payment confirmations are verified via cryptographically signed webhooks or direct server-to-server gateway queries.
 
@@ -32,10 +33,11 @@ The payment architecture adheres to a strict **Zero-Trust Client** model: mobile
          │                                   │ 6. Async Webhook (HMAC Signed)     │
          │                                   │◄───────────────────────────────────┤
          │                                   │ 7. Verify Webhook Signature        │
-         │                                   │ 8. DB Transaction: Payment=PAID    │
-         │                                   │ 9. Publish: payment.success        │
+         │                                   │ 8. Atomic payment_events Insert    │
+         │                                   │ 9. Transactional Payment Update    │
+         │                                   │ 10. Write OutboxEvent              │
          │                                   │                                    │
-         │ 10. Polling / WebSocket / FCM     │                                    │
+         │ 11. Poll /api/v1/payments/{id}    │                                    │
          │◄──────────────────────────────────┤                                    │
 ```
 
@@ -44,81 +46,162 @@ The payment architecture adheres to a strict **Zero-Trust Client** model: mobile
 ## 2. Webhook Signature Verification & Idempotency
 
 ### 2.1 HMAC-SHA256 Signature Verification
-Incoming webhooks to `/api/v1/payments/webhooks/{gateway}` are validated before payload deserialization:
-* **Razorpay:** Verifies `X-Razorpay-Signature` against the raw HTTP request body using `HmacSHA256` with the webhook secret.
+Incoming webhooks to `/api/v1/payments/webhooks/{gateway}` are cryptographically validated before any payload processing:
+* **Razorpay:** Verifies `X-Razorpay-Signature` against the raw HTTP request body using `HmacSHA256` with the configured webhook secret.
 * **Stripe:** Verifies `Stripe-Signature` using Stripe Java SDK `Webhook.constructEvent()`.
 
-### 2.2 Idempotency Safeguards
-* Every incoming webhook payload contains a gateway event ID (`event.id` or `payment.id`).
-* Spring Boot queries `payments` by `gateway_payment_id`. If the payment record is already in `PAID` status, the webhook returns `HTTP 200 OK` immediately without re-triggering invoices or duplicate events.
+### 2.2 Webhook Deduplication via `payment_events`
+Gateways deliver multiple events for a single payment lifecycle (`payment.authorized`, `payment.captured`, `payment.failed`, `refund.processed`) and may retry webhook delivery multiple times.
 
-### Payment Event Idempotency
+**Authoritative Deduplication Rule:**  
+Every incoming webhook event is registered in the `payment_events` table with a unique constraint on `(provider, gateway_event_id)`:
 
-The `payment_events` table tracks every individual webhook event:
 ```sql
--- Prevents duplicate processing of same event (gateways retry delivery)
-CONSTRAINT uq_payment_event UNIQUE (provider, gateway_event_id)
+CREATE TABLE payment_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payment_id UUID REFERENCES payments(id),
+    provider VARCHAR(50) NOT NULL,          -- 'RAZORPAY', 'STRIPE'
+    gateway_event_id VARCHAR(255) NOT NULL, -- Unique ID from webhook payload
+    gateway_payment_id VARCHAR(255),
+    event_type VARCHAR(100) NOT NULL,       -- 'payment.captured', 'payment.failed'
+    payload_hash VARCHAR(64) NOT NULL,
+    raw_payload JSONB NOT NULL,
+    received_at TIMESTAMPTZ DEFAULT NOW(),
+    processed_at TIMESTAMPTZ,
+    processing_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    error_message TEXT,
+    CONSTRAINT uq_payment_event UNIQUE (provider, gateway_event_id)
+);
 ```
 
-A single payment generates MULTIPLE events (authorized, captured, failed, refunded). Each event is tracked separately. The payment_events table is the authoritative record of what the gateway reported.
-
-### Webhook Processing Flow
-
-1. Receive webhook → verify HMAC-SHA256 signature (reject if invalid)
-2. Extract provider + gateway_event_id
-3. INSERT INTO payment_events ... ON CONFLICT DO NOTHING → if 0 rows affected: already processed → HTTP 200
-4. BEGIN TRANSACTION: validate state transition → UPDATE payments → INSERT outbox_events(PaymentCompleted) → COMMIT
-5. Return HTTP 200
-
-### Outbox Pattern Integration
-On successful payment state transition, a `PaymentCompleted` event is inserted into `outbox_events` within the SAME PostgreSQL transaction that updates payment status. This guarantees that invoice generation, notification dispatch, and booking status update are reliably triggered even if the RabbitMQ broker is temporarily unavailable.
-
----
-
-## 3. Cash on Delivery (COD) & Technician Field Collection
-
-For customers choosing cash or on-site UPI collect:
-1. Field technician marks `isCashCollected = true` and enters `cashAmountCollected` during visit completion.
-2. Spring Boot creates a `payments` record with `payment_method = 'CASH_ON_DELIVERY'` and `status = 'PAID'`.
-3. The Admin ERP reconciliation console tracks cash balances per technician, requiring branch managers to perform daily cash handovers.
+### 2.3 Webhook Processing Flow
+1. **Verify HMAC Signature:** Reject immediately with HTTP 400 if invalid.
+2. **Atomic Registration:**
+   ```sql
+   INSERT INTO payment_events (id, provider, gateway_event_id, gateway_payment_id, event_type, payload_hash, raw_payload)
+   VALUES (gen_random_uuid(), :provider, :gatewayEventId, :gatewayPaymentId, :eventType, :hash, :payloadJson)
+   ON CONFLICT (provider, gateway_event_id) DO NOTHING;
+   ```
+   If 0 rows were inserted, the event is a duplicate delivery: return `HTTP 200 OK` immediately.
+3. **Transactional State Machine Execution:**
+   - Begin PostgreSQL transaction.
+   - Lock payment row: `SELECT * FROM payments WHERE id = :id FOR UPDATE`.
+   - Validate state transition against the canonical `PaymentStatus` state machine.
+   - Update `payments.status`, `paid_at`, and gateway references.
+   - Update `payment_events.processing_status = 'PROCESSED'`.
+   - Insert `outbox_events` (`PaymentCompleted` or `PaymentRefunded`).
+   - Commit transaction.
+4. Return `HTTP 200 OK`.
 
 ---
 
-## 4. Automated PDF Invoice Generation Engine
+## 3. Canonical Payment Lifecycle & State Normalization
 
-When a payment succeeds or a service is completed, a RabbitMQ listener executes the invoice builder:
+### 3.1 Authoritative Status Enum (`PaymentStatus`)
+The platform standardizes on one canonical 7-state lifecycle across all database schemas, APIs, and domain events:
 
 ```text
-[ RabbitMQ Event: payment.success OR visit.completed ]
+                  ┌─────────────┐
+                  │   PENDING   │
+                  └──────┬──────┘
+                         ├─────────────────────────────────────────┐
+                         │ (Payment Authorized / Funds Held)       │ (Payment Failed)
+                         ▼                                         ▼
+                  ┌─────────────┐                           ┌─────────────┐
+                  │ AUTHORIZED  │                           │   FAILED    │
+                  └──────┬──────┘                           └─────────────┘
+                         │ (Capture Succeeded)
+                         ▼
+                  ┌─────────────┐
+                  │    PAID     │
+                  └──────┬──────┘
+                         ├────────────────────────┐
+                         │ (Partial Refund)       │ (Full Refund)
+                         ▼                        ▼
+               ┌──────────────────┐      ┌─────────────────┐
+               │PARTIALLY_REFUNDED│      │    REFUNDED     │
+               └──────────────────┘      └─────────────────┘
+
+* Note on PARTIAL: For milestone/split payments, status is PARTIAL while remaining balance is outstanding.
+```
+
+### 3.2 Gateway Normalization Rules
+* **Direct / Instant Capture (UPI, Card Direct):** Normalizes `PENDING` $\rightarrow$ `PAID`.
+* **Two-Step Authorization & Capture:**
+  - Gateway `payment.authorized` $\rightarrow$ Normalizes to `AUTHORIZED`.
+  - Gateway `payment.captured` $\rightarrow$ Normalizes to `PAID`.
+* **Failed Transactions:** Gateway `payment.failed` $\rightarrow$ Normalizes to `FAILED`.
+* **Refund Transactions:**
+  - Gateway `refund.processed` with `amount == total_amount` $\rightarrow$ Normalizes to `REFUNDED`.
+  - Gateway `refund.processed` with `amount < total_amount` $\rightarrow$ Normalizes to `PARTIALLY_REFUNDED`.
+
+---
+
+## 4. Cash on Delivery (COD) & Field Collection
+
+For customers choosing on-site payment:
+1. At booking confirmation: Booking is set to `CONFIRMED` while payment status remains `PENDING`.
+2. During visit completion: Field technician records `isCashCollected = true` and `cashAmountCollected`.
+3. Backend creates a `payments` record with `payment_method = 'CASH_ON_DELIVERY'`, `status = 'PAID'`, and links to the booking.
+4. The Admin ERP reconciliation console tracks cash balances per technician, requiring daily branch cash handovers before shift settlement.
+
+---
+
+## 5. Automated Sequential PDF Invoice Generation
+
+When a payment succeeds or a COD service is completed, the invoice builder executes:
+
+```text
+[ Outbox Domain Event: PaymentCompleted OR ServiceCompleted ]
                          │
                          ▼
-        [ Spring Boot Invoicing Service ]
-                         │ 1. Fetch Booking, Address, Line Items & Tax Info
-                         │ 2. Generate Next Sequential Invoice No: INV-2026-00042
-                         │ 3. Render PDF using OpenPDF Template Engine
+        [ Spring Boot Invoicing Module ]
+                         │ 1. Fetch Booking, Address, Line Items & Tax Breakdown
+                         │ 2. Generate Next Sequential Invoice No from PostgreSQL SEQUENCE: INV-YYYY-NNNNN
+                         │ 3. Render PDF using OpenPDF Engine
                          │
                          ▼
-             [ Upload to Object Storage ]
-                         │ (Path: /invoices/2026/09/INV-2026-00042.pdf)
+              [ Upload to Object Storage ]
+                         │ (Storage Key: /invoices/2026/09/INV-2026-00042.pdf)
                          │
                          ▼
-          [ PostgreSQL Transaction Commit ]
+           [ PostgreSQL Transaction Commit ]
                          │ • INSERT into invoices table
                          │ • INSERT into file_metadata table
-                         │ • UPDATE bookings.invoice_id
+                         │ • UPDATE bookings SET invoice_id = ...
+                         │ • INSERT into outbox_events (type='InvoiceGenerated')
                          │
                          ▼
-       [ Emit Event: invoice.generated ] ──► (Sends PDF via Email & FCM alert)
+             [ RabbitMQ Outbox Relay ] ──► (Sends PDF via Email & FCM push alert)
 ```
 
 ---
 
-## 5. Refund Lifecycle & Partial Credits
+## 6. Refund Lifecycle & Credit Notes
 
-* **Cancellation Prior to Dispatch:** Triggers automatic full refund via Gateway API.
-* **Service Quality Dispute:** Admin can issue a partial or full refund from the Admin Web ERP.
-* **Accounting Treatment:** A negative ledger transaction is created under `payment_transactions`, and a credit note PDF is generated.
+* **Cancellation Prior to Dispatch:** Triggers automated full gateway refund API call and marks payment `REFUNDED`.
+* **Service Dispute / Partial Refund:** Admin initiates partial refund from Admin Web ERP; backend records negative transaction in `payment_transactions`, transitions payment to `PARTIALLY_REFUNDED`, and generates a credit note PDF.
 
 ---
 
-*Governed by PCI-DSS security standards and transactional accounting integrity.*
+## 7. Payment Gateway Domain Port & Provider Abstraction
+
+To decouple the core `payments` domain module from vendor SDK specifics (Razorpay, Stripe):
+
+```java
+package com.pestcontrol.modules.payments.port;
+
+public interface PaymentGatewayPort {
+    PaymentOrderResult createOrder(PaymentOrderCommand command);
+    boolean verifyWebhookSignature(String rawPayload, Map<String, String> headers);
+    GatewayEventPayload parseWebhookEvent(String rawPayload);
+    RefundResult processRefund(RefundCommand command);
+    PaymentSyncResult fetchPaymentDetails(String gatewayPaymentId);
+}
+```
+
+* **Provider Adapters:**
+  - `RazorpayGatewayAdapter`: Implements `PaymentGatewayPort` using Razorpay Client SDK.
+  - `StripeGatewayAdapter`: Implements `PaymentGatewayPort` using Stripe Java SDK.
+* **PDF Rendering Standard:** Strictly standardizes on **`OpenPDF`** (LGPL/MPL compliant fork of iText). Alternatives such as proprietary iText versions are forbidden in V1.
+

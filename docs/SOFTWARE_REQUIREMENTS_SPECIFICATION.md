@@ -1,12 +1,11 @@
 # Software Requirements Specification (SRS)
 ## Pest Control Enterprise Resource Planning (ERP) System
 
-**Document Version:** 2.1.0  
-**Backend Framework:** Java 21 + Spring Boot 3.3.x (Maven Modular Monolith)  
-**Primary Database:** PostgreSQL 16  
-**Cache & Message Broker:** Redis 7.2 & RabbitMQ 3.13  
-**Target Systems:** Customer Android App, Technician Android App, Admin Web ERP Dashboard, Spring Boot REST Backend  
-**Supporting Services:** Firebase Authentication, Firebase Cloud Messaging, Provider-Neutral Object Storage. Firebase is limited to identity and push delivery; Firestore, Firebase Realtime Database, and Cloud Functions are not used for ERP data or backend logic.
+**Document Version:** 3.0.0  
+**Target Systems:** Customer Android App, Technician Android App, Admin Web ERP Dashboard, Backend REST API  
+**Primary System of Record:** PostgreSQL 16  
+**External Supporting Services:** Firebase Authentication (Identity Provider), Firebase Cloud Messaging (Push Delivery), Payment Gateways (Razorpay/Stripe), Maps & Geocoding Provider, Transactional SMS & Email Providers  
+**Architecture Reference:** Modular Monolith ([`docs/ARCHITECTURE.md`](ARCHITECTURE.md), [`docs/MODULE_CATALOG.md`](MODULE_CATALOG.md))  
 **Date:** September 2026  
 
 ---
@@ -14,157 +13,105 @@
 ## Table of Contents
 
 1. [Executive Summary & Purpose](#1-executive-summary--purpose)
-2. [Overall System Architecture](#2-overall-system-architecture)
-3. [Spring Boot Modular Monolith Architecture](#3-spring-boot-modular-monolith-architecture)
-4. [User Roles & RBAC Permission Matrix](#4-user-roles--rbac-permission-matrix)
-5. [3-Tier Operational Domain Model](#5-3-tier-operational-domain-model)
-6. [PostgreSQL Relational Data Model](#6-postgresql-relational-data-model)
-7. [Spring Boot REST API & State Machine Specifications](#7-spring-boot-rest-api--state-machine-specifications)
-8. [Functional Requirements (Module Breakdown)](#8-functional-requirements-module-breakdown)
-   - [8.1 Authentication & Profile Management](#81-authentication--profile-management)
-   - [8.2 Service Catalog & Dynamic Pricing Engine](#82-service-catalog--dynamic-pricing-engine)
-   - [8.3 Booking & State Machine Engine](#83-booking--state-machine-engine)
-   - [8.4 Field Technician Operations & Offline Sync](#84-field-technician-operations--offline-sync)
-   - [8.5 Payment Gateway, Invoicing & Financial Transactions](#85-payment-gateway-invoicing--financial-transactions)
-   - [8.6 Admin Operations, Dispatching & Resource Management](#86-admin-operations-dispatching--resource-management)
-   - [8.7 Agency / Branch Management](#87-agency--branch-management)
-   - [8.8 Inventory & Chemical Management](#88-inventory--chemical-management)
-   - [8.9 Expense & Revenue Management](#89-expense--revenue-management)
-   - [8.10 AMC (Annual Maintenance Contracts) & Recurring Services](#810-amc-annual-maintenance-contracts--recurring-services)
-   - [8.11 Feedback, Ratings & Support Ticketing](#811-feedback-ratings--support-ticketing)
-   - [8.12 Notification & Communications Engine](#812-notification--communications-engine)
-   - [8.13 Audit Logging & Compliance](#813-audit-logging--compliance)
-9. [Requirements Traceability Matrix](#9-requirements-traceability-matrix)
-10. [Non-Functional Requirements (NFR)](#10-non-functional-requirements-nfr)
-11. [Phased Release Scope (Release 1, 2 & 3)](#11-phased-release-scope-release-1-2--3)
+2. [Scope of the System](#2-scope-of-the-system)
+3. [User Classes & Stakeholder Personas](#3-user-classes--stakeholder-personas)
+4. [Role-Based Access Control (RBAC) Requirements](#4-role-based-access-control-rbac-requirements)
+5. [3-Tier Operational Domain Concept](#5-3-tier-operational-domain-concept)
+6. [Functional Requirements](#6-functional-requirements)
+   - [6.1 Authentication & User Management](#61-authentication--user-management)
+   - [6.2 Customer & Address Management](#62-customer--address-management)
+   - [6.3 Service Catalog & Pricing Engine](#63-service-catalog--pricing-engine)
+   - [6.4 Commercial Bookings & Slot Reservations](#64-commercial-bookings--slot-reservations)
+   - [6.5 Dispatch, Work Orders & Field Scheduling](#65-dispatch-work-orders--field-scheduling)
+   - [6.6 Field Operations & Offline Mobile Execution](#66-field-operations--offline-mobile-execution)
+   - [6.7 Payments, Cash Collection & Invoicing](#67-payments-cash-collection--invoicing)
+   - [6.8 Inventory & Chemical Management](#68-inventory--chemical-management)
+   - [6.9 Branch Expense & Operational Accounting](#69-branch-expense--operational-accounting)
+   - [6.10 Annual Maintenance Contracts (AMC)](#610-annual-maintenance-contracts-amc)
+   - [6.11 Customer Support, Ratings & Escalations](#611-customer-support-ratings--escalations)
+   - [6.12 Notifications & Alerts Engine](#612-notifications--alerts-engine)
+   - [6.13 Audit Trails & Compliance](#613-audit-trails--compliance)
+   - [6.14 Executive Reporting & Analytics](#614-executive-reporting--analytics)
+7. [Non-Functional Requirements (NFR)](#7-non-functional-requirements-nfr)
+   - [7.1 Performance & Latency](#71-performance--latency)
+   - [7.2 Security & Data Protection](#72-security--data-protection)
+   - [7.3 Reliability & Availability](#73-reliability--availability)
+   - [7.4 Offline Durability & Data Integrity](#74-offline-durability--data-integrity)
+8. [Phased Release Scope](#8-phased-release-scope)
 
 ---
 
 # 1. Executive Summary & Purpose
 
-The **Pest Control ERP Platform** is a unified, multi-platform software suite engineered to digitize and automate the entire operational lifecycle of a modern pest control enterprise.
+The **Pest Control ERP Platform** is an enterprise software solution designed to digitize, streamline, and coordinate end-to-end pest management operations across commercial and residential customer segments.
 
-PostgreSQL 16 is the sole system of record for all ERP domain data. Firebase Authentication and Firebase Cloud Messaging are supporting services only; Firestore, Firebase Realtime Database, and Cloud Functions are explicitly out of scope.
+The platform provides a centralized, authoritative operational backbone connecting customers, field technicians, branch dispatchers, accountants, and executive administrators into a single unified operating model.
 
-The platform coordinates interactions among four primary stakeholder groups:
-1. **Customers:** Discover pest control services, request quotes, schedule visits, make payments, track technician status, and access service histories.
-2. **Technicians (Field Force):** Receive job assignments, navigate to client sites, execute treatment protocols offline/online, capture evidence (before/after photos), record chemical usage, and obtain customer sign-offs.
-3. **Agency/Branch Managers:** Monitor local technicians, manage branch inventory, and track regional revenue/commissions.
-4. **Central Administrators / Executives:** Control service catalogs, manage dynamic pricing, dispatch technicians, audit financial entries, reconcile accounts, and analyze operational KPIs.
-
----
-
-# 2. Overall System Architecture
-
-```text
- ┌────────────────────────┐             ┌────────────────────────┐             ┌────────────────────────┐
- │  Customer Android App  │             │ Technician Android App │             │    Admin Web ERP App   │
- │   (Native Java 21)     │             │(Java 21, Offline Room) │             │ (React 18 + TypeScript)│
- └───────────┬────────────┘             └───────────┬────────────┘             └───────────┬────────────┘
-             │                                      │                                      │
-             └──────────────────────────────────────┼──────────────────────────────────────┘
-                                                    │ HTTPS / REST (JSON)
-                                                    ▼
-                               ┌─────────────────────────────────────────┐
-                               │       Spring Boot REST API Layer        │
-                               │          (Java 21 / Maven 3.x)          │
-                               └────────────────────┬────────────────────┘
-                                                    │
-                               ┌────────────────────▼────────────────────┐
-                               │    Spring Boot Modular Monolith Core    │
-                               │                                         │
-                               │ • Spring Security & Firebase JWT Filter │
-                               │ • Domain Services & Business Rules      │
-                               │ • Spring Data JPA / Hibernate Layer     │
-                               │ • RabbitMQ Event Publishers & Consumers │
-                               │ • Spring Scheduler & Redis Redlock      │
-                               └───────┬────────────┬────────────┬───────┘
-                                       │            │            │
-                      ┌────────────────┴────┐  ┌────┴──────┐ ┌───┴──────────────────┐
-                      ▼                     ▼  ▼           ▼ ▼                      ▼
-             ┌──────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌───────────────────┐
-             │    PostgreSQL    │ │     Redis      │ │    RabbitMQ    │ │  Object Storage   │
-             │ Primary Database │ │ Cache & Locks  │ │  Async Events  │ │ (S3/Cloud Storage)│
-             │(System-of-Record)│ └────────────────┘ └────────────────┘ └───────────────────┘
-             └──────────────────┘
-                                             │
-                                             ▼
-             ┌──────────────────────────────────────────────────────────────────────────────┐
-             │                         External Supporting Services                         │
-             │ • Firebase Authentication (Identity Provider for Customer, Tech & Admin)     │
-             │ • Firebase Cloud Messaging (FCM HTTP v1 Push Alerts)                         │
-             │ • No Firestore, Firebase Realtime Database, or Cloud Functions               │
-             │ • Payment Gateways (Razorpay / Stripe Webhook Integration)                   │
-             │ • Google Maps Platform (Geocoding & Places Autocomplete)                     │
-             │ • Transactional SMS / WhatsApp Provider (MSG91 / Twilio)                     │
-             │ • Transactional Email Provider (SendGrid / Resend)                           │
-             └──────────────────────────────────────────────────────────────────────────────┘
-```
+**Authoritative Requirements Baseline:**  
+This document specifies the pure functional and non-functional requirements for the platform. Detailed technical design, database schemas, message broker topology, and concurrency mechanics are defined in the companion architecture specifications:
+- System & Component Architecture: [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)
+- Domain Module Catalog: [`docs/MODULE_CATALOG.md`](MODULE_CATALOG.md)
+- Concurrency, Locking & Idempotency: [`docs/CONCURRENCY_AND_IDEMPOTENCY.md`](CONCURRENCY_AND_IDEMPOTENCY.md)
+- Payment & Invoicing Architecture: [`docs/PAYMENT_ARCHITECTURE.md`](PAYMENT_ARCHITECTURE.md)
+- Relational Database Design: [`docs/DATABASE_DESIGN.md`](DATABASE_DESIGN.md)
+- Domain Model & Lifecycle State Machines: [`docs/DOMAIN_MODEL.md`](DOMAIN_MODEL.md), [`docs/BOOKING_STATE_MACHINE.md`](BOOKING_STATE_MACHINE.md)
 
 ---
 
-# 3. Spring Boot Modular Monolith Architecture
+# 2. Scope of the System
 
-The backend is built as a single deployable **Modular Monolith** organized into 18 distinct domain modules:
-
-```text
-backend/src/main/java/com/pestcontrol/modules/
-├── auth/          # Firebase ID token validation, custom claims, and session filters
-├── users/         # User accounts, status, and role mappings
-├── customers/     # Customer profiles, property addresses, and contact preferences
-├── employees/     # Technician profiles, certifications, skills matrix, and shifts
-├── agencies/      # Branches, franchises, regional territories, and commissions
-├── services/      # Service catalog, categories, packages, and required skills
-├── pricing/       # Dynamic pricing calculations, area/BHK rules, and coupon engine
-├── bookings/      # Customer-facing commercial bookings and line items
-├── scheduling/    # Calendar availability, slot reservations, and Redis locks
-├── dispatch/      # Work orders, service visits, field assignment, and offline sync
-├── payments/      # Payment gateway initiation, webhook verification, and COD
-├── invoices/      # Sequential invoice numbering, PDF generation, and receipts
-├── expenses/      # Branch operational expenses, fuel logs, and receipt files
-├── inventory/     # Chemical products, batch FIFO expiry, and trunk stock allocation
-├── amc/           # Annual Maintenance Contracts and automated visit generators
-├── notifications/ # Event-driven multi-channel dispatch (FCM, SMS, Email, WhatsApp)
-├── support/       # Customer complaints, warranty claims, and ticket escalation
-├── reports/       # PostgreSQL reporting queries, daily KPI aggregations, and exports
-└── audit/         # Append-only database audit logs for all administrative mutations
-```
-
-> **Architectural Guardrail:** The initial implementation is a modular monolith, not a distributed microservice system. Modules are isolated by domain boundaries and may be extracted into independent services later if justified by scale, ownership, deployment independence, or reliability requirements.
+The platform coordinates the operational lifecycle across four primary application clients and a central backend service:
+1. **Customer Android App:** Self-service service discovery, upfront price estimations, slot selection, digital payments, real-time appointment tracking, AMC renewals, and service history.
+2. **Technician Android App:** Offline-capable field execution, job queue management, route navigation, task checklists, chemical dosage recording, photo evidence capture, and on-site customer signature acquisition.
+3. **Admin Web ERP Dashboard:** Centralized operations management, multi-branch dispatch boards, capacity management, billing reconciliation, technician skills matrix, inventory controls, and financial reporting.
+4. **Backend REST API:** Authoritative validation, business logic execution, state machine transitions, multi-tenant security isolation, and event coordination.
 
 ---
 
-# 4. User Roles & RBAC Permission Matrix
+# 3. User Classes & Stakeholder Personas
 
-Authorization is enforced via **Spring Security** evaluating user roles loaded from PostgreSQL upon validating the client's Firebase ID token.
+| Stakeholder Persona | Description & Primary Objectives |
+|:---|:---|
+| **Customer** | End-consumer or corporate facility manager ordering pest control treatments, scheduling appointments, and managing invoices. |
+| **Field Technician** | Field operative executing treatments on-site, recording chemical usage, and capturing customer sign-offs. |
+| **Agency / Branch Manager** | Regional supervisor overseeing local field force allocation, branch chemical stock, and operational expenses. |
+| **Dispatcher** | Operations specialist managing daily job queues, resolving scheduling conflicts, and balancing technician workloads. |
+| **Accountant** | Financial controller managing invoice generation, payment reconciliations, branch profit & loss, and tax reporting. |
+| **Super Admin** | System administrator configuring global service catalogs, pricing rules, branch territories, and user permissions. |
 
-| Capability / Module | Customer | Field Technician | Agency Manager | Dispatcher | Accountant | Super Admin |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| Browse Services & Rates | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
+---
+
+# 4. Role-Based Access Control (RBAC) Requirements
+
+The platform shall enforce strict role-based access control across all APIs and user interfaces:
+
+| Capability / Resource Area | Customer | Field Technician | Agency Manager | Dispatcher | Accountant | Super Admin |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Browse Public Service Catalog & Rates | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ |
 | Create Self-Service Booking | ✅ | ❌ | ❌ | ✅ (Manual) | ❌ | ✅ (Manual) |
-| View Own Bookings / Tasks | ✅ (Own) | ✅ (Assigned) | ✅ (Branch) | ✅ (All) | ✅ (All) | ✅ (All) |
-| Accept / Reject Assigned Job | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Start Service & Log Chemicals | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ (Override) |
+| View Own Assigned Tasks / Bookings | ✅ (Own) | ✅ (Assigned) | ✅ (Branch) | ✅ (All) | ✅ (All) | ✅ (All) |
+| Accept / Reject Assigned Work Orders | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Execute Service Visit & Log Chemicals | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ (Override) |
 | Manual Dispatch & Assignment | ❌ | ❌ | ✅ (Branch) | ✅ | ❌ | ✅ |
-| Manage Service Catalog & Prices| ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Chemical Inventory & Restock | ❌ | ❌ | ✅ (Branch) | ❌ | ❌ | ✅ |
+| Manage Service Catalog & Dynamic Prices | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Manage Branch Chemical Stock & Restock | ❌ | ❌ | ✅ (Branch) | ❌ | ❌ | ✅ |
 | Log Operating Expenses | ❌ | ❌ | ✅ (Branch) | ❌ | ✅ | ✅ |
-| View Executive Revenue & P&L | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| View System Audit Logs | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Access Financial Reports & P&L Statements | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Access System Audit Logs | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 ---
 
-# 5. 3-Tier Operational Domain Model
+# 5. 3-Tier Operational Domain Concept
 
-To support multi-visit jobs, recurring AMC contracts, and warranty visits without data duplication, the domain model separates commercial, operational, and execution concerns:
+To support multi-visit treatments, warranty follow-ups, and recurring AMC contracts without duplicating commercial records, the platform shall enforce a 3-tier operational separation:
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                        1. Commercial Request                            │
 │                              BOOKING                                    │
 │  • Customer Details, Target Address, Selected Services, Pricing Model  │
-│  • Commercial Status (PENDING, CONFIRMED, CANCELLED, CLOSED)            │
-│  • Billing & Payment Status (PENDING, PAID, REFUNDED)                   │
+│  • Commercial Status: PENDING, CONFIRMED, IN_PROGRESS, COMPLETED, CLOSED│
+│  • Payment Settlement Status: PENDING, AUTHORIZED, PAID, PARTIAL, etc. │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │ 1 : N
                                      ▼
@@ -172,224 +119,133 @@ To support multi-visit jobs, recurring AMC contracts, and warranty visits withou
 │                       2. Operational Assignment                         │
 │                             WORK ORDER                                  │
 │  • Operational Scope (Initial Treatment, Warranty Follow-Up, AMC Run)  │
-│  • Assigned Branch/Agency, Dispatch Priority, SLA Due Date             │
-│  • Operational Status (UNASSIGNED, ASSIGNED, IN_PROGRESS, COMPLETED)   │
+│  • Assigned Agency, Territory, Priority, SLA Due Date                   │
+│  • Operational Status: UNASSIGNED, ASSIGNED, IN_PROGRESS, COMPLETED     │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │ 1 : N
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                        3. Physical Execution                            │
 │                            SERVICE VISIT                                │
-│  • Primary Field Technician, Scheduled Date & Time Slot                 │
-│  • Visit Status (SCHEDULED, EN_ROUTE, ARRIVED, IN_PROGRESS, COMPLETED)  │
-│  • Field Evidence: Arrival/Start/End Timestamps, Checklist Verification │
-│    Chemicals Used & Batch Nos, Before/After Photos, Customer Signature  │
+│  • Assigned Field Technician, Scheduled Date & Time Slot                │
+│  • Visit Status: SCHEDULED, ON_THE_WAY, ARRIVED, STARTED, COMPLETED     │
+│  • Field Evidence: Timestamps, Checklist, Chemicals Used, Photos, Sign │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-# 6. PostgreSQL Relational Data Model
+# 6. Functional Requirements
 
-PostgreSQL 16 is the authoritative **System-of-Record (SoR)**. Foreign keys, constraints, and transactions govern all business entities:
+## 6.1 Authentication & User Management
+* **REQ-AUTH-001:** The platform shall authenticate Customers using Mobile Phone Number with SMS One-Time Password (OTP), with optional Google Sign-In federation.
+* **REQ-AUTH-002:** The platform shall authenticate Field Technicians using Employee ID/Mobile Number and a secure PIN paired with registered device hardware.
+* **REQ-AUTH-003:** The platform shall authenticate Administrative and Operational users using Corporate Email and Password enforced by Multi-Factor Authentication (MFA).
+* **REQ-AUTH-004:** The platform shall validate all user identity tokens on every API request and immediately reject deactivated accounts regardless of token validity.
 
-```text
-┌───────────────────────────┬─────────────────────────────────────────────────────────────────┐
-│ Relational Entity         │ Key Fields & Foreign Key Relationships                          │
-├───────────────────────────┼─────────────────────────────────────────────────────────────────┤
-│ `users`                   │ id (UUID), firebase_uid, email, phone_number, full_name, active │
-│ `roles` & `user_roles`    │ id, description; many-to-many user-role assignments             │
-│ `customers`               │ id, user_id (FK), customer_type, company_name, gst_number       │
-│ `customer_addresses`      │ id, customer_id (FK), line1, city, state, pincode, lat, lng     │
-│ `employees`               │ id, user_id (FK), agency_id (FK), employee_code, rating, active │
-│ `skills` & `emp_skills`   │ skill_id, title; many-to-many employee certification matrix     │
-│ `agencies`                │ id, agency_code, name, commission_rate, service_pincodes[]      │
-│ `service_categories`      │ id, name, slug, display_order, is_active                        │
-│ `services`                │ id, category_id (FK), title, pricing_model, base_price, warranty│
-│ `pricing_rules` / `tiers` │ id, service_id (FK), tier_name, unit_min, unit_max, unit_price  │
-│ `coupons`                 │ code (PK), discount_type, discount_value, min_amount, valid_to  │
-│ `coupon_redemptions`      │ id, coupon_id (FK), customer_id (FK), booking_id (FK), redeemed_at  │
-│ `bookings`                │ id, booking_number, customer_id (FK), address_id (FK), status   │
-│ `booking_items`           │ id, booking_id (FK), service_id (FK), pricing_tier, line_total  │
-│ `work_orders`             │ id, work_order_number, booking_id (FK), assigned_employee_id(FK)│
-│ `service_visits`          │ id, visit_number, work_order_id (FK), primary_employee_id (FK)  │
-│ `booking_events`          │ id, booking_id (FK), event_type, actor_id (FK), timestamp       │
-│ `payments`                │ id, payment_number, booking_id (FK), method, amount, status     │
-│ `payment_events`          │ id, payment_id (FK), provider, gateway_event_id UNIQUE, event_type, processing_status │
-│ `payment_transactions`    │ id, payment_id (FK), gateway_txn_id, amount, status, payload_json│
-│ `invoices`                │ id, invoice_number, booking_id (FK), customer_id (FK), pdf_path │
-│ `expenses`                │ id, agency_id (FK), category, amount, expense_date, receipt_url │
-│ `chemical_products`       │ id, product_name, registration_number, unit_of_measure, reorder │
-│ `chemical_batches`        │ id, product_id (FK), batch_number, expiry_date, available_qty  │
-│ `service_material_usage`  │ id, visit_id (FK), batch_id (FK), quantity_used, dosage_rate    │
-│ `amc_contracts`           │ id, contract_number, customer_id (FK), service_id (FK), visits  │
-│ `amc_schedules`           │ id, contract_id (FK), scheduled_date, sequence, work_order_id  │
-│ `support_tickets`         │ id, customer_id (FK), booking_id (FK), subject, status, priority│
-│ `support_messages`        │ id, ticket_id (FK), sender_id (FK), message_body, attachment_url│
-│ `notifications`           │ id, user_id (FK), channel, title, body, status, sent_at         │
-│ `file_metadata`           │ id, entity_type, entity_id, storage_provider, storage_path, size│
-│ `audit_logs`              │ id (BIGSERIAL), actor_id (FK), action, entity_type, old/new json│
-│ `outbox_events`           │ id, event_type, aggregate_type, aggregate_id, payload, publication_status │
-│ `idempotency_keys`        │ key PK, user_id, request_path, response_status, response_body, expires_at│
-│ `availability_slots`      │ id, service_date, start_time, end_time, employee_id, capacity, booked_count│
-└───────────────────────────┴─────────────────────────────────────────────────────────────────┘
+## 6.2 Customer & Address Management
+* **REQ-CUST-001:** The platform shall allow Customers to maintain multiple service addresses with structured street address, city, postal code, and geographic coordinates (latitude/longitude).
+* **REQ-CUST-002:** The platform shall maintain customer profiles, corporate GST numbers for commercial clients, communication preferences, and complete service histories.
 
-> **Note:** `work_orders → service_visits` is 1:N. A single Work Order may generate multiple Service Visits to support: initial failed visits, rescheduled visits, warranty follow-up visits, AMC recurring visits, and multi-technician visits.
-```
+## 6.3 Service Catalog & Pricing Engine
+* **REQ-CAT-001:** The platform shall support a hierarchical service catalog organized by categories, service definitions, treatment packages, and warranty terms.
+* **REQ-CAT-002:** The platform shall compute service pricing dynamically on the server based on configurable pricing models (unit area, BHK configuration, property type, pest severity level, and add-on treatments).
+* **REQ-CAT-003:** The platform shall support promotional coupon validation with constraints for date validity, minimum order value, customer usage limits, and maximum discount caps.
 
----
+## 6.4 Commercial Bookings & Slot Reservations
+* **REQ-BKG-001:** The platform shall allow Customers and Dispatchers to create commercial bookings selecting services, service address, preferred date, and time slot.
+* **REQ-BKG-002:** The platform shall maintain availability slot capacity per agency territory and prevent overbooking by reserving slot capacity upon booking initiation.
+* **REQ-BKG-003:** For Cash on Delivery (COD) bookings, the platform shall confirm the booking upon slot reservation while keeping payment status as `PENDING`.
+* **REQ-BKG-004:** For Prepaid bookings, the platform shall confirm the booking only after server verification of successful payment authorization.
+* **REQ-BKG-005:** The platform shall support booking rescheduling and cancellation with automated slot capacity adjustments.
 
-# 7. Spring Boot REST API & State Machine Specifications
+## 6.5 Dispatch, Work Orders & Field Scheduling
+* **REQ-DSP-001:** The platform shall automatically generate an operational Work Order upon booking confirmation.
+* **REQ-DSP-002:** The platform shall provide a visual dispatch board for Dispatchers and Agency Managers displaying technician workloads, open work orders, and geographic routes.
+* **REQ-DSP-003:** The platform shall enforce skill matching, preventing technician assignment if the technician lacks required certifications for the service.
+* **REQ-DSP-004:** The platform shall allow technicians to accept or reject assigned jobs within a configurable SLA window; rejected jobs shall return to the unassigned pool for redispatch.
 
-### 7.1 Backend Service Component Mapping
+## 6.6 Field Operations & Offline Mobile Execution
+* **REQ-FLD-001:** The platform shall support full offline mobile execution for Field Technicians in zero-connectivity environments, storing actions locally and synchronizing when connectivity resumes.
+* **REQ-FLD-002:** The platform shall track field visit state transitions: `SCHEDULED` $\rightarrow$ `ON_THE_WAY` $\rightarrow$ `ARRIVED` $\rightarrow$ `STARTED` $\rightarrow$ `COMPLETED` (or `FAILED`).
+* **REQ-FLD-003:** The mobile application shall capture mandatory service evidence: GPS arrival coordinates, pre-treatment photos, dynamic task checklist verification, post-treatment photos, chemical batch usage, and customer digital signature.
+* **REQ-FLD-004:** The platform shall resolve offline synchronization conflicts deterministically, preserving completed field work and logging audit entries for concurrent modifications.
 
-```text
-┌──────────────────────────────┬─────────────────────────────┬───────────────────────────────────────────┐
-│ Spring Boot Component        │ Primary REST Endpoints      │ Asynchronous Event Triggers / Queues      │
-├──────────────────────────────┼─────────────────────────────┼───────────────────────────────────────────┤
-│ `PricingService`             │ POST /api/v1/pricing/calc   │ — (Synchronous validation & calculation)  │
-│ `BookingService`             │ POST /api/v1/bookings       │ Emits `booking.created`, `booking.confirm`│
-│ `DispatchService`            │ POST .../work-orders/assign │ Emits `workorder.assigned` $\rightarrow$ FCM Push│
-│ `TechnicianJobService`       │ POST .../visits/{id}/complete│ Emits `visit.completed` $\rightarrow$ Invoicing │
-│ `PaymentService`             │ POST .../payments/webhooks  │ Emits `payment.success` $\rightarrow$ Ledger/PDF │
-│ `InvoiceService`             │ GET /api/v1/invoices/{id}   │ Consumes `payment.success` $\rightarrow$ OpenPDF│
-│ `InventoryService`           │ POST /api/v1/inventory/*    │ Consumes `visit.completed` $\rightarrow$ Deduct  │
-│ `AMCService`                 │ POST /api/v1/amc/contracts  │ Daily Cron $\rightarrow$ Emits `amc.visit_due`   │
-│ `FinancialReportingService`  │ GET /api/v1/reports/*       │ Nightly Cron $\rightarrow$ Rollup aggregation    │
-└──────────────────────────────┴─────────────────────────────┴───────────────────────────────────────────┘
-```
+## 6.7 Payments, Cash Collection & Invoicing
+* **REQ-PAY-001:** The platform shall integrate with trusted payment gateways to support card, net banking, and UPI transactions without trusting client-declared payment success.
+* **REQ-PAY-002:** The platform shall process payment gateway webhooks idempotently using provider event identifiers and validate payment state transitions.
+* **REQ-PAY-003:** The platform shall support Cash on Delivery (COD) collection by field technicians with daily branch cash handover reconciliation workflows.
+* **REQ-PAY-004:** The platform shall generate immutable sequential PDF invoices (`INV-YYYY-NNNNN`) upon payment completion or service completion, uploading them to secure object storage and delivering them to the customer.
+* **REQ-PAY-005:** The platform shall maintain an authoritative payment lifecycle: `PENDING`, `AUTHORIZED`, `PAID`, `PARTIAL`, `FAILED`, `REFUNDED`, `PARTIALLY_REFUNDED`.
 
----
+## 6.8 Inventory & Chemical Management
+* **REQ-INV-001:** The platform shall track chemical products, regulatory pesticide registration numbers, and batch expiration dates enforcing First-In, First-Out (FIFO) consumption.
+* **REQ-INV-002:** The platform shall track inventory across multiple physical tiers: Central Warehouse $\rightarrow$ Branch Warehouse $\rightarrow$ Technician Trunk Stock $\rightarrow$ Service Consumption.
+* **REQ-INV-003:** The platform shall execute authoritative inventory deductions within the service visit completion transaction and reject deductions exceeding available batch quantities.
+* **REQ-INV-004:** The platform shall calculate the exact material Cost of Goods Sold (COGS) for every completed service visit based on batch unit costs.
 
-# 8. Functional Requirements (Module Breakdown)
+## 6.9 Branch Expense & Operational Accounting
+* **REQ-EXP-001:** The platform shall allow Agency Managers to record branch operational expenses (fuel, vehicle maintenance, safety equipment, local overhead) with receipt image attachments.
+* **REQ-EXP-002:** The platform shall provide gross margin and net operating profit calculations per branch, technician, and service category.
 
-## 8.1 Authentication & Profile Management
-* **Customer App:** Mobile Phone Number + SMS OTP (Primary) with Google Sign-In fallback.
-* **Technician App:** Employee ID / Mobile + Secure PIN paired with device UUID.
-* **Admin Web Dashboard:** Corporate Email + Password enforced with Multi-Factor Authentication (MFA).
-* **Token Verification:** Spring Boot `FirebaseAuthenticationFilter` validates ID tokens and resolves user records from PostgreSQL.
+## 6.10 Annual Maintenance Contracts (AMC)
+* **REQ-AMC-001:** The platform shall support multi-visit Annual Maintenance Contracts (Quarterly, Bi-Monthly, Monthly) with contract term tracking.
+* **REQ-AMC-002:** The platform shall automatically generate child operational work orders for upcoming AMC visits 7 days prior to their scheduled due date.
 
-## 8.2 Service Catalog & Dynamic Pricing Engine
-* **Hierarchical Structure:** Categories $\rightarrow$ Services $\rightarrow$ Pricing Rules.
-* **Dynamic Pricing Engine:** Handled server-side in `PricingService`:
-  $$\text{Base Amount} = \text{Unit Price} \times \text{Quantity / Area}$$
-  $$\text{Subtotal} = \text{Base Amount} + \sum \text{Add-ons}$$
-  $$\text{Discounted Subtotal} = \max(0, \text{Subtotal} - \text{Coupon Discount})$$
-  $$\text{Total Payable} = \text{Discounted Subtotal} + \text{Taxes}$$
+## 6.11 Customer Support, Ratings & Escalations
+* **REQ-SUP-001:** The platform shall capture 1-to-5 star customer ratings and written feedback following service completion.
+* **REQ-SUP-002:** The platform shall automatically generate high-priority support escalation tickets for any service rated below 3 stars.
+* **REQ-SUP-003:** The platform shall support warranty revisit claims linked to original booking records.
 
-## 8.3 Booking & State Machine Engine
-* Separate state machines for **Booking Status**, **Work Order Status**, and **Service Visit Status**.
-* Concurrency protection via **Redis distributed locks** preventing slot double-booking.
+## 6.12 Notifications & Alerts Engine
+* **REQ-NOT-001:** The platform shall deliver real-time push notifications, transactional SMS messages, and formatted email receipts for critical operational events (booking confirmation, technician arrival, service completion, payment receipt).
 
-### Booking Confirmation Payment Rules
-* **COD / Deferred Payment Model:** Booking transitions from PENDING to CONFIRMED immediately after slot availability is validated and locked. Payment status remains PENDING — the service will proceed with COD collection at completion.
-* **Prepaid Model:** Booking transitions to CONFIRMED only after the backend verifies successful payment authorization from the payment gateway. Client-declared payment success is never accepted.
-* The `booking_type` field on the booking determines which confirmation flow applies.
+## 6.13 Audit Trails & Compliance
+* **REQ-AUD-001:** The platform shall record an immutable, append-only audit trail for all business state transitions, administrative modifications, inventory adjustments, and dispatch overrides.
 
-## 8.4 Field Technician Operations & Offline Sync
-* **Offline-First Field Execution:** SQLite (Room DB) action queue with deterministic operation_id (UUID) for idempotency, monotonic local_sequence for ordering, and device_id registration. Cryptographic payload signing is deferred to a future security hardening phase.
-* **CameraX Media Capture:** Local WebP compression ($<500\text{ KB}$) before upload.
-* **Background Sync:** Android `WorkManager` pushes queued actions to `POST /api/v1/dispatch/visits/sync`.
-* **Deterministic Conflict Resolution:** Field physical completion overrides concurrent online cancellations with audit logging.
-
-## 8.5 Payment Gateway, Invoicing & Financial Transactions
-* Tokenized payment initiation via `POST /api/v1/payments/initiate`.
-* HMAC-SHA256 signature verification on gateway webhooks.
-* Cash on Delivery (COD) field collection and daily branch cash reconciliation.
-* Automated sequential PDF invoice generation (`INV-2026-00001`) via Spring Boot PDF builder.
-
-## 8.6 Admin Operations, Dispatching & Resource Management
-* Visual Gantt and calendar dispatch boards with technician skill matching.
-* Real-time technician workload balancing.
-
-## 8.7 Agency / Branch Management
-* Regional branch data isolation by postal/pincode boundary.
-* Agency commission tracking and settlement reports.
-
-## 8.8 Inventory & Chemical Management
-* Chemical product registration and batch tracking with expiration dates (FIFO).
-* Multi-tier tracking: Central Warehouse $\rightarrow$ Branch Warehouse $\rightarrow$ Technician Trunk Stock $\rightarrow$ Service Visit Consumption.
-* Automated material Cost of Goods Sold (COGS) calculation per job.
-
-## 8.9 Expense & Revenue Management
-* Branch operating expense logging with receipt file attachments.
-* Profit & Loss calculation:
-  $$\text{Net Margin} = \text{Gross Revenue} - (\text{Chemical COGS} + \text{Commissions} + \text{Operating Expenses})$$
-
-## 8.10 AMC (Annual Maintenance Contracts) & Recurring Services
-* Multi-visit contract structures (Quarterly, Bi-Monthly, Monthly).
-* Spring Scheduler cron job running daily to auto-generate child work orders 7 days prior to visit due date.
-
-## 8.11 Feedback, Ratings & Support Ticketing
-* Post-service ratings (1–5 Stars); ratings $<3$ stars auto-generate high-priority support tickets for manager escalation.
-
-## 8.12 Notification & Communications Engine
-* RabbitMQ event listeners dispatching alerts across FCM Push, Transactional SMS (MSG91/Twilio), and HTML Emails (Thymeleaf).
-
-## 8.13 Audit Logging & Compliance
-* Immutable, append-only PostgreSQL `audit_logs` capturing actor, action, entity, before/after JSON values, and IP addresses.
+## 6.14 Executive Reporting & Analytics
+* **REQ-REP-001:** The platform shall provide executive dashboards with operational and financial KPIs: revenue, job completion rate, technician utilization, customer retention, and regional profitability.
+* **REQ-REP-002:** The platform shall provide paginated, filterable tabular reporting with asynchronous CSV and Excel export capabilities.
 
 ---
 
-# 9. Requirements Traceability Matrix
+# 7. Non-Functional Requirements (NFR)
 
-```text
-┌─────────────────────────┬──────────────────┬─────────────────┬───────────────────┬───────────────────────────┬────────────────────┐
-│ Business Requirement    │ Client App       │ Backend Module  │ DB Entities       │ Core API Endpoint         │ Async Event        │
-├─────────────────────────┼──────────────────┼─────────────────┼───────────────────┼───────────────────────────┼────────────────────┤
-│ Customer Books Service  │ Customer Android │ bookings        │ bookings, items   │ POST /api/v1/bookings     │ booking.confirmed  │
-│ Dispatcher Assigns Tech │ Admin Web ERP    │ dispatch        │ work_orders       │ POST .../work-orders/assign│ workorder.assigned │
-│ Tech Completes Job      │ Technician App   │ dispatch        │ service_visits    │ POST .../visits/complete  │ visit.completed    │
-│ Payment Captured        │ Gateway Webhook  │ payments        │ payments, invoices│ POST .../webhooks/{gw}    │ payment.success    │
-│ Chemical Logged         │ Technician App   │ inventory       │ service_material  │ POST .../visits/complete  │ inventory.deducted │
-│ AMC Visit Due           │ Spring Scheduler │ amc             │ amc_schedules     │ (Internal Cron Task)      │ amc.visit_generated│
-└─────────────────────────┴──────────────────┴─────────────────┴───────────────────┴───────────────────────────┴────────────────────┘
-```
+### 7.1 Performance & Latency
+* **NFR-PERF-001:** The backend API shall respond within 250 ms for 95% of standard read and write requests under normal operational load.
+* **NFR-PERF-002:** Service catalog and pricing rule lookups shall be optimized to support responsive mobile browsing.
 
----
+### 7.2 Security & Data Protection
+* **NFR-SEC-001:** All client-server communications shall use TLS 1.3 encryption.
+* **NFR-SEC-002:** The platform shall enforce strict multi-tenant agency data isolation preventing cross-branch resource access.
+* **NFR-SEC-003:** No Personally Identifiable Information (PII), authentication tokens, or raw payment card data shall ever be recorded in system logs.
 
-# 10. Non-Functional Requirements (NFR)
+### 7.3 Reliability & Availability
+* **NFR-REL-001:** The platform shall maintain a 99.9% service availability SLA during operational business hours.
+* **NFR-REL-002:** Asynchronous domain event publication shall guarantee at-least-once delivery using a transactional outbox mechanism.
 
-| Parameter | Target SLA | Implementation Architecture |
-| :--- | :--- | :--- |
-| **API Response Latency** | $< 250\text{ ms}$ for 95% of requests | PostgreSQL composite B-tree indexes & Redis caching for catalog/pricing. |
-| **Field Offline Durability**| Zero data loss in zero-signal zones | Encrypted SQLite Room queue with WorkManager exponential backoff. |
-| **Data Integrity** | 100% ACID compliance for billing | PostgreSQL transactions (`@Transactional`), foreign keys, and idempotency keys. |
-| **High Availability** | 99.9% uptime | Containerized Spring Boot instances behind Nginx load balancing. |
+### 7.4 Offline Durability & Data Integrity
+* **NFR-DATA-001:** The Technician Mobile Application shall ensure zero data loss for on-site execution evidence when operating without network connectivity.
+* **NFR-DATA-002:** All financial transactions, inventory balances, and booking state transitions shall maintain 100% ACID consistency.
 
 ---
 
-# 11. Phased Release Scope (Release 1, 2 & 3)
+# 8. Phased Release Scope
 
-```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
-│                              Phased Scope Matrix                                       │
-├────────────────────────────────────────────┬─────────────┬─────────────┬───────────────┤
-│ Capability / Module                        │ Release 1   │ Release 2   │ Release 3     │
-│                                            │ (Core Ops)  │ (Fin & ERP) │ (Automation)  │
-├────────────────────────────────────────────┼─────────────┼─────────────┼───────────────┤
-│ Customer App (Auth, Catalog, Booking)      │     ✅      │      -      │       -       │
-│ Technician App (Job queue, Checklist)      │     ✅      │      -      │       -       │
-│ Technician Offline Room Cache              │     ✅      │      -      │       -       │
-│ Admin Web ERP (Bookings, Tech Management)  │     ✅      │      -      │       -       │
-│ Manual Dispatch Board                      │     ✅      │      -      │       -       │
-│ Push Notifications (FCM)                   │     ✅      │      -      │       -       │
-├────────────────────────────────────────────┼─────────────┼─────────────┼───────────────┤
-│ Payment Gateway (Razorpay/Stripe) + COD    │      -      │     ✅      │       -       │
-│ Automated PDF Invoicing Engine             │      -      │     ✅      │       -       │
-│ Chemical Batch & Trunk Stock Tracking      │      -      │     ✅      │       -       │
-│ Branch Expense & Profitability Dashboard   │      -      │     ✅      │       -       │
-│ Customer Digital Signature & Photos        │      -      │     ✅      │       -       │
-│ Support Ticketing & Low-Rating Escalation  │      -      │     ✅      │       -       │
-├────────────────────────────────────────────┼─────────────┼─────────────┼───────────────┤
-│ AMC Contract & Automated Recurring Visits  │      -      │      -      │      ✅       │
-│ Intelligent AI Technician Dispatching      │      -      │      -      │      ✅       │
-│ Agency / Branch Multi-Tenant Portal        │      -      │      -      │      ✅       │
-│ Customer WhatsApp Business Integration     │      -      │      -      │      ✅       │
-│ Advanced Inventory Barcode Scanning        │      -      │      -      │      ✅       │
-└────────────────────────────────────────────┴─────────────┴─────────────┴───────────────┘
-```
-
----
-
-*This document defines the baseline functional and architectural requirements for implementation.*
+| Functional Area / Capability | Release 1 (Core Operations) | Release 2 (Financial & ERP) | Release 3 (Advanced Automation) |
+|:---|:---:|:---:|:---:|
+| Customer App: Authentication, Catalog, Booking | ✅ | — | — |
+| Technician App: Offline Room Queue, Checklists | ✅ | — | — |
+| Admin Web ERP: Core Dispatch & Booking Board | ✅ | — | — |
+| Push Notifications (FCM Alerts) | ✅ | — | — |
+| Online Payment Gateways (Razorpay/Stripe) & COD | — | ✅ | — |
+| Sequential PDF Invoicing Engine | — | ✅ | — |
+| Multi-Tier Inventory, Batch FIFO & COGS | — | ✅ | — |
+| Branch Expenses & P&L Reporting | — | ✅ | — |
+| Photo Evidence Capture & Digital Signatures | — | ✅ | — |
+| Support Ticketing & Low-Rating Escalations | — | ✅ | — |
+| AMC Contract Automation & Scheduled Visits | — | — | ✅ |
+| Intelligent Automated Technician Dispatching | — | — | ✅ |
+| Agency Multi-Tenant Management Portal | — | — | ✅ |
+| WhatsApp Business Channel Integration | — | — | ✅ |
+| Mobile Barcode Scanning for Chemical Batches | — | — | ✅ |

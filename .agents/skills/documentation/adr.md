@@ -4,6 +4,10 @@ description: Skill for Architecture Decision Records.
 category: documentation
 triggers:
   - write adr
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # documentation-adr

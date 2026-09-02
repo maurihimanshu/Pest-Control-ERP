@@ -4,6 +4,10 @@ description: Skill for API contract testing.
 category: testing
 triggers:
   - test api contracts
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # testing-api-contract-testing

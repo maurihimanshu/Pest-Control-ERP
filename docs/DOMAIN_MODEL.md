@@ -5,65 +5,68 @@ Implementation Status: Documentation / Architecture Baseline
 — Technician Android: Not implemented
 — Admin Web: Not implemented
 
-This document defines the canonical domain model, aggregates, state machines, and business invariants for the Pest Control ERP system.
+This document defines the canonical domain model, aggregate boundaries, state machines, and business invariants across the Pest Control ERP system.
 
-## 1. Entities & Aggregates
+## 1. Domain Entities & Aggregate Boundaries
 
-- **Booking Aggregate**: `bookings`, `booking_items`, `booking_events`, `coupons`, `coupon_redemptions`
-- **Dispatch Aggregate**: `work_orders` (1:N `service_visits`), `service_checklists`, `service_material_usage`
-- **Payment Aggregate**: `payments`, `payment_events`, `invoices`, `invoice_items`
-- **Inventory Aggregate**: `chemical_products`, `chemical_batches`, `inventory_locations`, `inventory_transactions`
-- **AMC Aggregate**: `amc_contracts`, `amc_schedules`
-- **Customer Aggregate**: `customers`, `customer_addresses`
-- **Employee Aggregate**: `employees`, `employee_skills`
-- **Agency Aggregate**: `agencies`
-- **Support Aggregate**: `support_tickets`, `support_messages`
-- **Cross-Cutting**: `notifications`, `file_metadata`, `audit_logs`, `outbox_events`
+The domain model is partitioned into aggregates that align directly with the 18 domain modules defined in [`docs/MODULE_CATALOG.md`](MODULE_CATALOG.md):
 
-## 2. State Machines
+- **Booking Aggregate (`bookings` module)**: `bookings`, `booking_items`, `booking_events`, `coupons`, `coupon_redemptions`, `availability_slots`.
+- **Dispatch Aggregate (`dispatch` module)**: `work_orders` (1:N `service_visits`), `service_checklists`, `offline_sync_logs`.
+- **Payment Aggregate (`payments` module)**: `payments`, `payment_events`, `payment_transactions`, `invoices`, `invoice_items`.
+- **Inventory Aggregate (`inventory` module)**: `chemical_products`, `chemical_batches`, `inventory_locations`, `inventory_transactions`, `service_material_usage`.
+- **AMC Aggregate (`amc` module)**: `amc_contracts`, `amc_schedules`.
+- **Catalog Aggregate (`catalog` module)**: `service_categories`, `services`, `pricing_rules`, `pricing_tiers`.
+- **Customer Aggregate (`customers` module)**: `customers`, `customer_addresses`.
+- **Employee Aggregate (`employees` module)**: `employees`, `skills`, `employee_skills`.
+- **Agency Aggregate (`agencies` module)**: `agencies`, `agency_service_areas`.
+- **Expense Aggregate (`expenses` module)**: `expenses`, `expense_categories`.
+- **Support Aggregate (`support` module)**: `support_tickets`, `support_messages`, `service_ratings`.
+- **Cross-Cutting Foundation Modules**: `auth`, `users`, `notifications`, `files`, `reporting`, `audit`, `outbox`.
 
-### 1. BookingStatus
-**Transitions**: PENDING → CONFIRMED → ASSIGNED → IN_PROGRESS → COMPLETED → CANCELLED | RESCHEDULED | CLOSED
+---
 
-- **PENDING**: Created by customer. Actor: Customer. API: `POST /api/v1/bookings`
-- **CONFIRMED**: Backend validates service/slot. Actor: System (after slot lock). Side-effect: `availability_slot.booked_count++`, `BookingConfirmed` event.
-- **ASSIGNED**: Dispatcher assigns technician. Actor: DISPATCHER/ADMIN. API: `POST /api/v1/dispatch/work-orders/assign`. Side-effect: creates WorkOrder, `WorkOrderCreated` event.
-- **IN_PROGRESS**: Technician arrives and starts. Actor: System (derived from WorkOrder state). Side-effect: Booking status reflects field activity.
-- **COMPLETED**: Service visit(s) completed & payment resolved. Actor: System. Side-effect: `BookingCompleted` event, invoice finalized.
-- **CANCELLED**: Cancelled before completion. Actor: Customer / ADMIN / DISPATCHER. Side-effect: `availability_slot.booked_count--`, refund if paid.
-- **RESCHEDULED**: New slot requested. Actor: Customer/ADMIN. Side-effect: old slot released, new slot locked.
-- **CLOSED**: Final administrative close. Actor: ADMIN/SUPER_ADMIN.
+## 2. State Machines & Lifecycle Rules
 
-*Payment Dependency Notes:*
-- **COD / Deferred Payment**: `CONFIRMED` status does NOT require prior payment. `paymentStatus = PENDING` is valid. `CONFIRMED` means the backend has accepted the booking, locked the slot, and the service will proceed.
-- **Prepaid**: `CONFIRMED` requires backend-verified payment authorization BEFORE confirmation.
+### 1. Booking Status (Commercial Aggregate State)
+**Lifecycle**: `PENDING` $\rightarrow$ `CONFIRMED` $\rightarrow$ `IN_PROGRESS` $\rightarrow$ `COMPLETED` $\rightarrow$ `CLOSED` (or `CANCELLED`).
 
-### 2. WorkOrderStatus
-**Transitions**: ASSIGNED → ACCEPTED | REJECTED → ON_THE_WAY → ARRIVED → STARTED → COMPLETED | CANCELLED
-- Governs the overall job lifecycle from the dispatch perspective.
+- **`PENDING`**: Initial checkout. Awaiting slot lock and (for prepaid) gateway payment authorization.
+- **`CONFIRMED`**: Slot capacity locked in PostgreSQL (`booked_count++`). For COD: `payment_status = 'PENDING'` is valid. For Prepaid: `payment_status` is `AUTHORIZED` or `PAID`. Work Order generated in `UNASSIGNED`.
+- **`IN_PROGRESS`**: **Derived business state.** Set when any child Work Order / Service Visit is actively underway (`ASSIGNED`, `ON_THE_WAY`, `ARRIVED`, `STARTED`) or when an initial visit is completed while subsequent scheduled visits/work orders remain open.
+- **`COMPLETED`**: **Derived business state.** Set when ALL operational Work Orders associated with the booking have reached `COMPLETED` (or `CANCELLED`), all child Service Visits are terminal (`COMPLETED` or `CANCELLED`), and no operational work remains open.
+- **`CLOSED`**: Set when operational status is `COMPLETED` **AND** financial settlement is resolved (`payment_status = 'PAID'` or COD handover verified) **AND** final sequential PDF invoice is generated and linked.
+- **`CANCELLED`**: Cancelled prior to operational completion. Slot capacity released (`booked_count--`). Child Work Orders and Visits cancelled. Refund issued if prepaid.
 
-### 3. ServiceVisitStatus
-*(Note: Separate from WorkOrderStatus to support 1:N cardinality)*
-**Transitions**: SCHEDULED → ON_THE_WAY → ARRIVED → STARTED → COMPLETED | CANCELLED | FAILED
-- Each `ServiceVisit` has its own status.
-- One `WorkOrder` may have MULTIPLE `ServiceVisits` (1:N). Supports failed visits, rescheduled visits, follow-ups.
-- **FAILED/CANCELLED Visit**: Creates a new `ServiceVisit` on the same `WorkOrder` for rescheduling.
-- **COMPLETED Visit**: Triggers `visit.completed` event → inventory deduction → invoice generation.
+### 2. Work Order Status (Operational Dispatch State)
+**Lifecycle**: `UNASSIGNED` $\rightarrow$ `ASSIGNED` $\rightarrow$ `IN_PROGRESS` $\rightarrow$ `COMPLETED` (or `CANCELLED`).
+- Owned exclusively by the `dispatch` module.
+- Represents the operational grouping of work dispatched to a technician.
 
-### 4. PaymentStatus
-**Transitions**: PENDING → AUTHORIZED → PAID | PARTIAL | FAILED.
-- **Secondary**: PAID → REFUNDED | PARTIALLY_REFUNDED
-- Status strictly managed by the backend webhook processor, never overridable by client requests.
+### 3. Service Visit Status (Field Execution State)
+**Lifecycle**: `SCHEDULED` $\rightarrow$ `ON_THE_WAY` $\rightarrow$ `ARRIVED` $\rightarrow$ `STARTED` $\rightarrow$ `COMPLETED` (or `FAILED` | `CANCELLED`).
+- Cardinality: 1 Work Order to N Service Visits (1:N). Supports failed visits, rescheduled revisits, warranty inspections, and multi-technician visits.
+- **`FAILED`**: Treatment attempted but blocked on-site (access denied, customer absent). Creates a NEW child `ServiceVisit` on the SAME Work Order.
+- **`COMPLETED`**: Service executed successfully. Executes **transactional inventory deduction** in the same PostgreSQL transaction with `SELECT ... FOR UPDATE` on `chemical_batches`, writes `service_material_usage`, and inserts `outbox_events(ServiceCompleted)`.
+
+### 4. Payment Status (Financial Settlement State)
+**Lifecycle**: `PENDING` $\rightarrow$ `AUTHORIZED` $\rightarrow$ `PAID` | `PARTIAL` | `FAILED`.  
+**Reversals**: `PAID` | `PARTIAL` $\rightarrow$ `REFUNDED` | `PARTIALLY_REFUNDED`.
+- Authoritative state machine updated exclusively by the server webhook processor via `payment_events (provider, gateway_event_id)` deduplication.
+
+---
 
 ## 3. Business Invariants
 
-1. **Transactional Slot Locking**: A booking can only be `CONFIRMED` if an available slot exists and is locked transactionally.
-2. **Coupon Limits**: A coupon can only be used once per customer (enforced via `UNIQUE(coupon_id, customer_id)` in `coupon_redemptions` when perUserLimit=1).
-3. **Technician Concurrency**: A technician cannot accept a job if they have an active `STARTED` job.
-4. **Authoritative Payments**: Payment state transitions are BACKEND ONLY.
-5. **Inventory Integrity**: Inventory deduction is transactional. `CHECK (current_quantity >= 0)`.
-6. **Immutable Invoices**: Invoice numbers are generated once and are strictly immutable after issuance.
-7. **Audit Append-Only**: Rows in `audit_logs` are NEVER updated or deleted.
+1. **Transactional Slot Capacity**: A booking can only transition to `CONFIRMED` if slot capacity is available in PostgreSQL and locked via `SELECT ... FOR UPDATE`.
+2. **Transactional Inventory Deductions**: Inventory deduction runs strictly inside the service visit completion transaction with row locks on `chemical_batches` (`CHECK (current_quantity_available >= 0)`). RabbitMQ is never used to trigger deductions.
+3. **Outbox Pattern Publication**: No business transaction may publish directly to RabbitMQ. Domain events are inserted into `outbox_events` in the same database transaction as the business mutation.
+4. **Authoritative Webhook Deduplication**: Webhook event processing relies solely on the unique constraint `(provider, gateway_event_id)` in `payment_events`.
+5. **Technician Concurrency**: A technician cannot accept or start a new job if they currently have another active job in `STARTED` status.
+6. **Immutable Invoices**: Invoice numbers from the PostgreSQL sequence (`INV-YYYY-NNNNN`) and invoice PDF documents are strictly immutable once issued.
+7. **Append-Only Audit Logs**: Rows in `audit_logs` can NEVER be updated or deleted.
+
+---
 
 ## 4. Cardinality Summary Table
 
@@ -73,10 +76,10 @@ This document defines the canonical domain model, aggregates, state machines, an
 | bookings → booking_items | 1:N | `booking_id` | CASCADE |
 | bookings → work_orders | 1:N | `booking_id` | RESTRICT |
 | work_orders → service_visits | 1:N | `work_order_id` | RESTRICT |
-| service_visits → service_material_usage | 1:N | `visit_id` | RESTRICT |
-| chemical_batches → service_material_usage | 1:N | `batch_id` | RESTRICT |
+| service_visits → service_material_usage | 1:N | `service_visit_id` | RESTRICT |
+| chemical_batches → service_material_usage | 1:N | `chemical_batch_id` | RESTRICT |
 | payments → payment_events | 1:N | `payment_id` | RESTRICT |
 | bookings → payments | 1:N | `booking_id` | RESTRICT |
 | coupons → coupon_redemptions | 1:N | `coupon_id` | RESTRICT |
 | customers → coupon_redemptions | 1:N | `customer_id` | RESTRICT |
-| amc_contracts → amc_schedules | 1:N | `contract_id` | RESTRICT |
+| amc_contracts → amc_schedules | 1:N | `amc_contract_id` | RESTRICT |

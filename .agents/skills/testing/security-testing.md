@@ -4,6 +4,10 @@ description: Skill for security tests.
 category: testing
 triggers:
   - test security
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # testing-security-testing

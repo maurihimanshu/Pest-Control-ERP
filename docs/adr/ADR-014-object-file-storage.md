@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-001, ADR-008, docs/DATABASE_DESIGN.md, docs/ARCHITECTURE.md
+**Affected Artifacts:** docs/DATABASE_DESIGN.md, docs/ARCHITECTURE.md, docs/MODULE_CATALOG.md
 
 ## Context
 Large binary files should not bloat the PostgreSQL database. Must be scalable and provider-neutral.

@@ -4,6 +4,10 @@ description: Skill for commit messages.
 category: git
 triggers:
   - write commit
+inputs: []
+outputs: []
+dependencies: []
+related_skills: []
 ---
 
 # git-commit-standards

@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-002, ADR-004, docs/ARCHITECTURE.md, docs/MODULE_CATALOG.md
+**Affected Artifacts:** docs/ARCHITECTURE.md, docs/MODULE_CATALOG.md, backend/
 
 ## Context
 System needs a reliable, testable, maintainable backend for a complex ERP.

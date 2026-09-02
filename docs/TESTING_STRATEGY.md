@@ -70,4 +70,23 @@ class BookingServiceIntegrationTest {
 
 ---
 
-*Governed by enterprise software quality and automated continuous integration standards.*
+## 5. Business-Invariant & Concurrency Integration Tests
+
+The test suite must explicitly validate non-negotiable enterprise business invariants under concurrent load using Testcontainers:
+
+1. **Booking Slot Capacity Race Condition:** 50 concurrent virtual threads attempt to reserve the final remaining capacity unit on an Agency Capacity Pool (`capacity = 5`, `booked_count = 4`); exactly 1 thread succeeds and 49 receive HTTP `409 Conflict`.
+2. **Duplicate Payment Webhook Replay:** Multiple simultaneous deliveries of the exact same `(provider, gateway_event_id)` webhook payload execute; exactly 1 processes state mutation and all others return `HTTP 200 OK` without duplicate side-effects.
+3. **Payment State Inversion Guard:** Webhooks arriving out of order (e.g. `payment.failed` after `payment.captured`) are rejected by domain state transition guards.
+4. **Technician Duplicate Offline Sync:** Replaying the same `operation_id` returns the cached operation result without duplicating database mutations.
+5. **Offline Completion vs. Administrative Cancellation:** Field completion during disconnection overrides a concurrent administrative cancellation and logs a record in `sync_conflicts`.
+6. **Chemical Batch Inventory Concurrency:** Concurrent deductions across multiple visits for the same batch cannot drive `current_quantity_available` below zero; excess deductions throw `InsufficientInventoryException`.
+7. **Coupon Usage & Per-User Limit Races:** Concurrent checkouts using the same single-use or per-user coupon cannot exceed configured limits.
+8. **Multi-Tenancy Cross-Agency IDOR Attack:** Agency Manager from Agency A attempting to read or mutate Work Orders, Visits, or Inventory belonging to Agency B is rejected with HTTP `403 Forbidden` or `404 Not Found`.
+9. **Presigned File Upload Authorization:** Direct attempts to request upload/download URLs for unassigned visits or other agencies are rejected.
+10. **AMC Schedule Single-Instance Advisory Lock:** Concurrent scheduler executions across multiple application nodes acquire `pg_try_advisory_xact_lock` so only one node executes the generation.
+11. **Transactional Outbox At-Least-Once Delivery:** Outbox relay worker survives simulated message broker restarts without losing pending events or producing phantom events.
+12. **Sequential Invoice Numbering Concurrency:** High-concurrency invoice generation produces strictly sequential `INV-YYYY-NNNNN` numbers without gaps or duplicate numbers.
+
+---
+
+*Governed by enterprise software quality, automated Testcontainers integration, and continuous integration standards.*

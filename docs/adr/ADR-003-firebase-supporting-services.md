@@ -3,6 +3,10 @@
 **Status:** Accepted
 **Date:** September 2026
 **Deciders:** Principal Architect, Product Owner
+**Supersedes:** None
+**Superseded by:** None
+**Related:** ADR-001, ADR-002, ADR-008, docs/AUTHENTICATION_AND_AUTHORIZATION.md
+**Affected Artifacts:** docs/AUTHENTICATION_AND_AUTHORIZATION.md, docs/NOTIFICATION_ARCHITECTURE.md
 
 ## Context
 Firebase Authentication provides excellent mobile auth (phone OTP, Google Sign-In). FCM provides reliable push delivery. Firestore/Cloud Functions are not suitable for ERP.

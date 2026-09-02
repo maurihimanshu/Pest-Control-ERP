@@ -18,8 +18,8 @@ related_skills:
 
 # 📚 Master Skill Index — Pest Control ERP Agent Skills
 
-> **Start here.** Before using any skill, read [`_architecture_rules.md`](./_architecture_rules.md).
-> Total skills: **96** across **16 categories**.
+> **Start here.** Before using any skill, read [`_architecture_rules.md`](./_architecture_rules.md) and [`docs/MODULE_CATALOG.md`](../../docs/MODULE_CATALOG.md).
+> Total skills: **96** across **16 categories**. Canonical domain modules: **18**.
 
 ---
 
