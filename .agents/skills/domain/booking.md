@@ -32,42 +32,46 @@ The `Booking` is the root aggregate for a service request. It dictates what serv
 ## Domain Rules & Constraints
 1. **Immutable Fields:** Once a Booking transitions to `CONFIRMED`, fields affecting the price (services selected, coupon used) or core terms become immutable. Any changes require either a cancellation and re-booking or a specialized change-order process that recalculates pricing.
 2. **Relationship:** 1 Booking -> N Work Orders.
-3. **State Machine:**
-   `PENDING` -> `CONFIRMED` -> `ASSIGNED` -> `IN_PROGRESS` -> `COMPLETED`
-   Valid alternative flows:
-   `PENDING` -> `CANCELLED`
-   `CONFIRMED` -> `CANCELLED`
-   Rescheduling is an atomic appointment update that retains the active booking status; it is not a `BookingStatus`.
-   `COMPLETED` -> `CLOSED` (after accounting/invoice settled)
+3. **Canonical State Machine (7 States):**
+   `PENDING` -> `CONFIRMED` -> `ASSIGNED` -> `IN_PROGRESS` -> `COMPLETED` -> `CLOSED`
+   - Cancellation is allowed ONLY prior to execution start: `PENDING` -> `CANCELLED`, `CONFIRMED` -> `CANCELLED`, `ASSIGNED` -> `CANCELLED`.
+   - `COMPLETED -> CANCELLED` is strictly forbidden. Post-completion reversals use Credit Notes and Refund workflows.
+   - Rescheduling is an atomic schedule update (`scheduled_date`, `time_slot`, `reschedule_count`); it is NOT a `BookingStatus`.
+4. **Tenant Scoping:** Bookings assigned to an agency must always be loaded and mutated with tenant scope validation (`findBy...AndAgencyId` or customer ownership check).
 
 ## Entity Structure
 *   `id` UUID
 *   `customer_id` UUID
-*   `address_id` UUID
-*   `service_ids` JSONB array or M2M join table
-*   `status` VARCHAR
-*   `subtotal` DECIMAL
-*   `tax` DECIMAL
-*   `discount` DECIMAL
-*   `total_amount` DECIMAL
-*   `preferred_schedule_date` TIMESTAMP
+*   `customer_address_id` UUID
+*   `agency_id` UUID (FK)
+*   `status` VARCHAR (`CHECK (status IN ('PENDING', 'CONFIRMED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'CLOSED'))`)
+*   `payment_status` VARCHAR
+*   `subtotal_amount` NUMERIC(12, 2)
+*   `discount_amount` NUMERIC(12, 2)
+*   `tax_amount` NUMERIC(12, 2)
+*   `total_payable_amount` NUMERIC(12, 2)
+*   `scheduled_date` DATE
+*   `scheduled_time_slot` VARCHAR
 *   `created_at`, `updated_at`
 
 ## Spring Service Methods
-*   `Booking createBooking(CreateBookingDto request)`
+*   `Booking createBooking(UUID customerId, CreateBookingDto request)`
 *   `Booking confirmBooking(UUID bookingId)`
 *   `void cancelBooking(UUID bookingId, String reason)`
-*   `Booking rescheduleBooking(UUID bookingId, LocalDateTime newDate)`
+*   `Booking rescheduleBooking(UUID bookingId, LocalDate newDate, String newTimeSlot)`
 
 ## API Endpoints
 *   `POST /api/v1/bookings`
 *   `GET /api/v1/bookings/{id}`
-*   `PUT /api/v1/bookings/{id}/status`
+*   `POST /api/v1/bookings/{id}/confirm`
 *   `POST /api/v1/bookings/{id}/cancel`
+*   `POST /api/v1/bookings/{id}/reschedule`
 
 ## Database Considerations
 *   Ensure audit logs capture all state transitions.
-*   The status column should have a `CHECK` constraint validating the allowed states.
+*   The status column has `CHECK (status IN ('PENDING', 'CONFIRMED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'CLOSED'))`.
+*   Capacity allocation locks `availability_slots` with `SELECT ... FOR UPDATE`.
+
 
 ## RabbitMQ Events
 *   `BookingCreatedEvent` -> Consumed by Notification Service (Customer Email/SMS).

@@ -16,40 +16,46 @@ related_skills:
 # caching-distributed-locks
 
 ## Purpose
-Skill for Redis distributed locks (Redlock). Cover: slot reservation locking (booking slot concurrency), Redlock algorithm with Redisson, lock TTL, lock release on exception, when to use vs when PostgreSQL advisory locks are sufficient.
+Skill for Redis distributed locks (Redlock). Cover: slot reservation pre-coordination (contention reduction), Redlock algorithm with Redisson, lock TTL, lock release on exception, and why PostgreSQL transactions/exclusion constraints remain the authoritative correctness mechanism.
 
 ## When to Use
-Preventing race conditions across multiple instances (e.g., slot booking).
+Reducing database lock contention across multiple application instances during checkout spikes.
 
 ## When NOT to Use
-For single-instance locks or simple DB row updates (use DB locks).
+Never use as the sole or final correctness mechanism for financial transactions, slot capacity, technician assignment, or inventory deductions. PostgreSQL transactions (`SELECT FOR UPDATE`, exclusion constraints) are mandatory.
 
 ## Required Context
 - Redisson client
+- PostgreSQL ACID transactions
 
 ## Inputs
-- Critical sections
+- Contention-heavy endpoints
 
 ## Expected Outputs
-- Safe distributed locks
+- Safe distributed pre-locks with PostgreSQL transactional backing
 
 ## Rules & Constraints
-1. Always release locks in a `finally` block.
-2. Always set a reasonable lock TTL to prevent deadlocks on crash.
+1. **Redis is Non-Authoritative:** An acquired Redis lock is a preliminary optimization; the database transaction MUST still validate invariants and acquire row/table locks.
+2. Always release locks in a `finally` block.
+3. Always set a reasonable lock TTL to prevent deadlocks on crash.
 
 ## Step-by-Step Workflow
-1. Inject RedissonClient.
+1. Inject `RedissonClient`.
 2. Acquire lock with `tryLock(waitTime, leaseTime)`.
-3. Execute critical section.
-4. Release lock in `finally`.
+3. Open `@Transactional` boundary in PostgreSQL with `SELECT ... FOR UPDATE`.
+4. Validate business invariants and execute database mutations.
+5. Commit database transaction.
+6. Release Redis lock in `finally` block.
 
 ## Validation Checklist
 - [ ] Lock has TTL.
 - [ ] Released properly on exception.
-- [ ] Prevents double-booking.
+- [ ] Database transaction enforces actual capacity / exclusion constraints regardless of lock status.
 
 ## Common Mistakes
-- Not setting a TTL, causing indefinite lock if the server dies.
+- Assuming an acquired Redis lock means the booking is guaranteed safe without database-level transactional validation.
+- Missing lock TTL, causing indefinite lock if the node terminates.
+
 
 ## Example Usage
 ```java

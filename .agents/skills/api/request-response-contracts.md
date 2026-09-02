@@ -16,40 +16,49 @@ related_skills:
 # api-request-response-contracts
 
 ## Purpose
-Skill for request/response contract design. Cover: standard ApiResponse<T> wrapper {data, message, timestamp, traceId}, ApiErrorResponse {code, message, timestamp, traceId, validationErrors[]}, pagination response {content, page, size, totalElements, totalPages}.
+Skill for request/response contract design. Cover: standard `ApiResponse<T>` wrapper `{data, message, timestamp, traceId}`, `ApiErrorResponse` `{code, message, timestamp, traceId, validationErrors[]}`, pagination response `{content, page, size, totalElements, totalPages}`, and explicit exemptions for non-JSON or native endpoints.
 
 ## When to Use
-Standardizing API outputs across all controllers.
+Standardizing API outputs across all Spring MVC `@RestController` endpoints.
 
 ## When NOT to Use
-For internal method signatures.
+For internal service method signatures.
 
 ## Required Context
-- Base classes
+- Spring Web, Jackson, Springdoc
 
 ## Inputs
-- Raw data payloads
+- Raw data payloads and DTOs
 
 ## Expected Outputs
-- Standardized JSON responses
+- Standardized REST envelopes with clear exemption rules
 
 ## Rules & Constraints
-1. Every successful response must be wrapped in `ApiResponse<T>`.
-2. Every error must return `ApiErrorResponse`.
-3. Include trace/correlation IDs in all responses.
+1. **Standard JSON Resources:** Wrapped in `ApiResponse<T>`.
+2. **Standard Errors:** Return `ApiErrorResponse` with HTTP status, machine error code, message, timestamp, trace ID, and optional `validationErrors[]`.
+3. **Explicit Wrapper Exemptions:**
+   - **File / Media Downloads:** Return native `ResponseEntity<Resource>` or `StreamingResponseBody` with raw binary stream and appropriate `Content-Type` / `Content-Disposition` headers (NO JSON envelope).
+   - **HTTP 204 No Content:** Return empty response body (`ResponseEntity.noContent().build()`).
+   - **Payment Webhook Endpoints:** Return gateway-specific response (e.g. `HTTP 200 OK` with raw `{"status": "ok"}` or empty body as required by Razorpay/Stripe).
+4. Always include `X-Correlation-ID` / `traceId` from MDC.
 
 ## Step-by-Step Workflow
-1. Create `ApiResponse` class.
-2. Create `ApiErrorResponse` class.
-3. Update controllers to return wrapped objects.
-4. Update global exception handler.
+1. Create `ApiResponse<T>` record.
+2. Create `ApiErrorResponse` record with `ValidationError` list.
+3. Update standard controllers to return `ApiResponse<T>`.
+4. Leave file streaming and webhook controllers unwrapped.
+5. Update `GlobalExceptionHandler` with `@RestControllerAdvice`.
 
 ## Validation Checklist
-- [ ] Trace IDs are present.
-- [ ] Validation errors are formatted clearly.
+- [ ] Standard JSON APIs return `ApiResponse<T>`.
+- [ ] File downloads stream native binary without JSON wrapper.
+- [ ] Webhooks return gateway-expected format.
+- [ ] Trace IDs are present in all JSON responses and error envelopes.
 
 ## Common Mistakes
-- Returning raw lists instead of a wrapped response.
+- Wrapping binary file downloads or PDF streams in an `ApiResponse<T>`, breaking client PDF viewers.
+- Returning raw uncaught exception stack traces to clients.
+
 
 ## Example Usage
 ```java

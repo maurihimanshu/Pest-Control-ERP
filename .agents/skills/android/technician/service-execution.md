@@ -16,41 +16,50 @@ related_skills:
 # technician-service-execution
 
 ## Purpose
-Skill for technician field execution flow. Cover: Accept job, navigate ON_THE_WAY, ARRIVED, STARTED, checklist completion, chemical/material logging, CameraX WebP compression (<500KB), GPS capture, customer signature, COMPLETED sync.
+Skill for technician field execution flow. Cover: Accept job, navigate ON_THE_WAY, ARRIVED, STARTED, checklist completion, chemical/material logging, CameraX WebP compression (<500KB), GPS capture, customer signature, hardware Android Keystore cryptographic signing (EC P-256 / SHA256withECDSA), and COMPLETED sync.
 
 ## When to Use
-When building the execution flow for a specific field visit.
+When building the execution flow for a specific field visit on the Android Technician App (Java 21).
 
 ## When NOT to Use
 For admin-side operations.
 
 ## Required Context
+- Android Native (Java 21)
 - CameraX
 - Room DAOs
+- Android Keystore System (`AndroidKeyStore`)
 
 ## Inputs
-- Job status changes
+- Job status changes and field evidence
 
 ## Expected Outputs
-- Execution state machine
+- Robust execution state machine with signed offline operation envelopes
 
 ## Rules & Constraints
-1. Enforce state transitions (ASSIGNED -> ON_THE_WAY -> ARRIVED...).
-2. Compress images before saving/uploading.
+1. Enforce canonical state transitions (`ASSIGNED -> ACCEPTED -> ON_THE_WAY -> ARRIVED -> STARTED -> COMPLETED`).
+2. Compress all images to WebP (<500KB) locally before queuing.
+3. **Mandatory Keystore Signing (P0-02):** Every high-risk field mutation (`START_VISIT`, `COMPLETE_VISIT`, `LOG_CHEMICALS`) MUST be cryptographically signed using the device's hardware-backed EC P-256 private key and transmitted with `X-Device-Signature`.
 
 ## Step-by-Step Workflow
-1. Load job details from Room.
-2. Present state transition buttons based on current state.
-3. Capture checklist and materials upon STARTED.
+1. Load visit details from Room DB.
+2. Present valid state transition actions based on current status.
+3. Capture checklist, chemicals used, arrival GPS, and photos.
 4. Compress signatures and photos to WebP.
-5. Save final state to Room and enqueue sync.
+5. Serialize operation payload to normalized JSON.
+6. Sign payload bytes using Android Keystore `Signature.getInstance("SHA256withECDSA")`.
+7. Enqueue signed `PendingOperation` in Room DB for `WorkManager` background sync.
 
 ## Validation Checklist
-- [ ] State machine is robust.
-- [ ] Images are compressed properly.
+- [ ] State machine enforces canonical progression.
+- [ ] High-risk operations are signed with the Android Keystore private key.
+- [ ] Images are compressed properly to WebP.
+- [ ] Offline operation payload includes monotonic `local_sequence`.
 
 ## Common Mistakes
-- Allowing invalid state transitions (e.g., STARTED to ON_THE_WAY).
+- Allowing unsigned completion payloads.
+- Bypassing the local SQLite/Room store and attempting direct synchronous HTTP calls.
+
 
 ## Example Usage
 ```java

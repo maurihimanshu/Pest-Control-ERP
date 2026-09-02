@@ -31,13 +31,14 @@ Dispatch is a complex scheduling problem. It requires querying multiple domains 
 
 ## Domain Rules & Constraints
 1. **Skill Matching:** A technician cannot be assigned to a `Work Order` if they lack the required skill.
-2. **Calendar Availability:** A technician cannot be assigned to two overlapping jobs unless explicitly overridden by a manager.
-3. **Concurrency Control:** When automatically assigning or when multiple dispatchers are working, use a Redis distributed lock (Redlock pattern) on the `(employee_id, time_slot)` to prevent race conditions leading to double-booking.
+2. **Calendar Availability & Overlap Protection:** Overlapping technician appointments are mathematically forbidden at the database level by the PostgreSQL `ex_slot_employee_time_overlap` GiST exclusion constraint on `availability_slots`.
+3. **Concurrency Control & Authority:** The authoritative correctness guarantee is PostgreSQL transaction-level row locking (`SELECT FOR UPDATE`) and exclusion constraints. An optional short-TTL Redis distributed lock (Redlock pattern) on `(agency_id, employee_id, date, time_slot)` may be used for UI contention reduction, but it NEVER replaces database validation.
+4. **Tenant Scoping:** All dispatch queries and assignment commands must derive `agencyId` from the authenticated security context and filter explicitly via `findBy...AndAgencyId`.
 
 ## Spring Service Methods
-*   `List<TimeSlot> getAvailableSlots(UUID skillId, LocalDate date, String zipCode)`
-*   `void assignJob(UUID workOrderId, UUID employeeId)`
-*   `DispatchBoardView getBoardView(LocalDate date, UUID agencyId)`
+*   `List<TimeSlot> getAvailableSlots(UUID agencyId, UUID skillId, LocalDate date, String zipCode)`
+*   `void assignJob(UUID agencyId, UUID workOrderId, UUID employeeId)`
+*   `DispatchBoardView getBoardView(UUID agencyId, LocalDate date)`
 
 ## API Endpoints
 *   `GET /api/v1/dispatch/availability`
@@ -45,21 +46,23 @@ Dispatch is a complex scheduling problem. It requires querying multiple domains 
 *   `GET /api/v1/dispatch/board`
 
 ## Database Considerations
-*   The dispatch board query is heavy. It joins `work_orders`, `employees`, `customers` (for names), and `service_visits` (for current status).
-*   Consider a read-optimized materialized view or Redis cache for the live dispatch board if performance degrades.
+*   The dispatch board query joins `work_orders`, `employees`, `customers` (for names), and `service_visits` (for current status).
+*   Enforce `agency_id` on all joins and rely on PostgreSQL Row Level Security (RLS) for defense-in-depth.
 
 ## RabbitMQ Events
-*   `TechnicianAssignedEvent` -> Sent to Notification service to push to tech app.
-*   `TechnicianUnassignedEvent` -> Sent if schedule changes.
+*   `TechnicianAssigned` -> Sent to Notification service to push to tech app.
+*   `TechnicianUnassigned` -> Sent if schedule changes.
 
 ## Validation Checklist
 - [ ] Is skill matching enforced?
-- [ ] Are race conditions for time slots mitigated using Redis distributed locks?
+- [ ] Are technician time overlaps blocked by PostgreSQL GiST exclusion constraint?
+- [ ] Is tenant scope (`agencyId`) enforced in all repository queries?
 - [ ] Can dispatchers override rules if necessary (with audit logging)?
 
 ## Common Mistakes
-*   Relying solely on database transactions without row locking or Redis locks, allowing two rapid requests to book the same technician at the same time.
-*   Ignoring travel time between jobs in advanced implementations.
+*   Assuming an acquired Redis lock guarantees booking safety without database-level transactional validation.
+*   Querying work orders without `agencyId` scoping.
+
 
 ## Related Skills
 - `domain/work-order`

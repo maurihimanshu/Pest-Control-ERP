@@ -172,10 +172,11 @@ Spring Security RBAC
 | Allowed | Forbidden |
 |:---|:---|
 | Caching service catalog, pricing rules | Storing booking or payment state |
-| Distributed slot locking (Redlock) | Storing user records |
-| Rate limiting (sliding window counter) | Being the system-of-record for anything |
-| Temporary OTP/session state | Replacing PostgreSQL transactions |
+| Ephemeral rate limiting (sliding window counter) | Storing user records |
+| Temporary OTP/session state | Being the system-of-record for anything |
+| Contention reduction / pre-coordination locks | Replacing PostgreSQL transactional enforcement |
 
+- **Authoritative Locking Invariant**: Redis/Redlock is an OPTIONAL pre-coordination and contention-reduction layer ONLY. All booking, slot capacity, technician assignment, and inventory invariants MUST be transactionally enforced in PostgreSQL (`SELECT FOR UPDATE`, GiST exclusion constraints, unique constraints). An acquired Redis lock never replaces database validation.
 - Cache key convention: `pestcontrol:{module}:{entity}:{id}`
 - All cached data MUST also exist in PostgreSQL
 - TTL MUST be set on every Redis key
@@ -195,7 +196,7 @@ Spring Security RBAC
 - **No Direct Broker Publishing**: Business `@Transactional` methods NEVER publish directly to RabbitMQ.
 - **Transactional Commit**: Business entity mutations + `outbox_events` insert occur in the SAME PostgreSQL transaction.
 - **Relay Mechanism**: An independent outbox polling service (`SELECT ... FOR UPDATE SKIP LOCKED`) reads pending rows, publishes to RabbitMQ, and marks them `PUBLISHED`.
-- **Consumer Idempotency**: All consumers MUST be idempotent and handle duplicate deliveries gracefully.
+- **Consumer Idempotency (Inbox Pattern)**: All consumers MUST maintain idempotent processing using `inbox_events` and handle duplicate deliveries gracefully without duplicate business side-effects.
 - Every queue MUST have a **Dead Letter Exchange (DLX)** configured.
 - Standard event envelope: `{ eventId, eventType, aggregateType, aggregateId, occurredAt, version, payload }`
 
@@ -219,7 +220,8 @@ BookingClosed       ServiceVisitCompleted PaymentRefunded
 4. **Payment webhooks** — always validate HMAC-SHA256 signature before processing
 5. **No PII in logs** — never log tokens, passwords, card numbers, OTPs, or personal data
 6. **HTTPS only** — TLS enforced at load balancer
-7. **Idempotency** — all retryable mutating operations MUST support `Idempotency-Key` header
+7. **Idempotency** — all retryable mutating operations MUST support `Idempotency-Key` header with PostgreSQL persistence
+8. **Universal Tenant Scope Rule**: Never retrieve an agency-scoped entity solely by ID without verifying authorized tenant scope (`findBy...AndAgencyId`). Every agency-scoped command/query must derive tenant scope from authenticated context (`SecurityContext`) and enforce it in service/repository authorization.
 
 ---
 
@@ -232,14 +234,15 @@ Technician Android (offline-capable)
         (operation_id UUID, idempotency_key, type, payload JSON,
          status, retry_count, client_timestamp, sync_status)
   └── CameraX → WebP compression < 500 KB before upload
-  └── EC P-256 Keystore signature for START_VISIT, COMPLETE_VISIT, LOG_CHEMICALS
+  └── EC P-256 Keystore signature (SHA256withECDSA) for START_VISIT, COMPLETE_VISIT, LOG_CHEMICALS
   └── WorkManager SyncWorker (exponential backoff, network constraint)
   └── POST /api/v1/dispatch/visits/sync → Spring Boot → PostgreSQL
 ```
 
-- **Conflict rule**: An offline completion received after an administrative cancellation MUST NOT override the cancellation. Record a conflict, preserve both the cancellation and submitted completion evidence, and require an authorized DISPATCHER or ADMIN resolution; log the decision in `audit_logs`.
+- **Cryptographic Trust**: Critical offline actions (`START_VISIT`, `COMPLETE_VISIT`, `LOG_CHEMICALS`) MUST be signed with the hardware-backed EC P-256 Android Keystore private key and verified server-side (`X-Device-Signature`).
+- **Conflict rule**: An offline completion received after an administrative cancellation MUST NOT override the cancellation. Record a conflict in `sync_conflicts`, preserve both the cancellation and submitted completion evidence, and require an authorized DISPATCHER or ADMIN resolution; log the decision in `audit_logs`.
 - Backend NEVER blindly overwrites server state with stale client data
-- Each offline operation has a unique `operation_id` and `idempotency_key`
+- Each offline operation has a unique `operation_id` and `local_sequence`
 
 ---
 
@@ -247,6 +250,31 @@ Technician Android (offline-capable)
 
 1. **NO Generic `findById(UUID id)` for Agency Entities:** Any entity owned by an agency (`work_orders`, `service_visits`, `inventory`, `expenses`, `support_tickets`) MUST be queried with explicit agency scoping: `findByIdAndAgencyId(UUID id, UUID agencyId)`.
 2. **Automated Cross-Tenant IDOR Tests:** Every agency-scoped resource endpoint must include automated integration tests asserting HTTP `403 Forbidden` / `404 Not Found` when accessed by another agency's user.
+3. **Defense-in-Depth RLS:** PostgreSQL Row Level Security is active on agency-scoped tables using session setting `app.current_agency_id`.
+
+---
+
+## 11. Engineering Implementation Lifecycle
+
+Every feature implementation must follow this strict dependency gate:
+
+```text
+1. Requirements Analysis
+       ↓
+2. Business Rules & Invariants Validation (Capacities, Non-Negative Checks, Idempotency)
+       ↓
+3. State Machine & Cross-Aggregate State Alignment
+       ↓
+4. Architecture & Security Impact Analysis (Tenant Scoping, RBAC, Keystore Signing)
+       ↓
+5. Database Flyway Migration (DDL, Foreign Keys, GiST Exclusion / Check Constraints)
+       ↓
+6. Backend Service Layer & Domain Invariants (@Transactional, SELECT FOR UPDATE, Outbox)
+       ↓
+7. REST API Controllers & Error Contracts (ApiResponse<T>, DTO Bean Validation)
+       ↓
+8. Client Implementation & Automated Verification (Testcontainers, Espresso, Room Tests)
+```
 
 ---
 

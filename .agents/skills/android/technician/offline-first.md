@@ -19,42 +19,49 @@ related_skills:
 # technician-offline-first
 
 ## Purpose
-Skill for technician offline-first architecture. Cover: Room as local truth, WorkManager for background sync, exponential backoff retry, what operations can be performed offline vs online-only.
+Skill for technician offline-first architecture. Cover: Room as local truth, WorkManager for background sync, monotonic `local_sequence`, Android Keystore cryptographic payload signing (`X-Device-Signature`), exponential backoff retry, and what operations can be performed offline vs online-only.
 
 ## When to Use
-When building the core architecture for the Technician App.
+When building the core architecture for the Technician App (Android Native Java 21).
 
 ## When NOT to Use
 For the Customer App, which is generally online-first.
 
 ## Required Context
-- Room, WorkManager dependencies
+- Java 21 Android toolchain
+- Room, WorkManager, SQLCipher
+- Android Keystore System (`AndroidKeyStore`)
 
 ## Inputs
 - Field operations required offline
 
 ## Expected Outputs
-- Robust offline-first architecture
+- Robust offline-first architecture with signed operation envelopes
 
 ## Rules & Constraints
-1. Room is the single source of local truth.
+1. Room + SQLCipher is the single source of local truth.
 2. WorkManager handles all network synchronization.
-3. Backend remains the ultimate authority on conflict.
+3. Every offline operation contains `device_id`, `operation_id`, `local_sequence`, `client_created_at`, `payload_version`, and `payload`.
+4. High-risk operations (`START_VISIT`, `COMPLETE_VISIT`, `LOG_CHEMICALS`) MUST be signed with the hardware-backed EC P-256 Android Keystore private key (`SHA256withECDSA`).
+5. Backend remains the ultimate authority on conflict; conflicts are persisted to `sync_conflicts` for supervisor resolution.
 
 ## Step-by-Step Workflow
-1. Define entities in Room.
-2. Implement Repository pattern that only reads from Room.
-3. Queue network operations via WorkManager.
-4. Update Room upon successful sync.
+1. Define encrypted entities in Room with SQLCipher.
+2. Implement Repository pattern that writes locally to Room and enqueues a signed `PendingOperation`.
+3. Queue network operations via WorkManager with `NetworkType.CONNECTED` constraints.
+4. On network availability, transmit batch sync to `/api/v1/dispatch/visits/sync` with `X-Device-Signature`.
+5. Update Room upon successful sync and delete attached local media.
 
 ## Validation Checklist
-- [ ] UI reacts only to Room database changes (e.g., via Flow/LiveData).
-- [ ] Operations are queued when offline.
-- [ ] Sync resumes on network availability.
+- [ ] UI reacts only to Room database changes (via LiveData / Flow).
+- [ ] Monotonic `local_sequence` is maintained per device.
+- [ ] High-risk operations are signed with the Android Keystore private key.
+- [ ] Sync resumes automatically on network connectivity.
 
 ## Common Mistakes
-- Waiting for a network response before updating the UI.
-- Not handling background sync failures properly.
+- Waiting for a network response before updating the local UI.
+- Allowing unsigned or unsequenced offline payloads.
+
 
 ## Example Usage
 ```java
