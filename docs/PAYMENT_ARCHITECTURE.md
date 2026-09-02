@@ -205,3 +205,32 @@ public interface PaymentGatewayPort {
   - `StripeGatewayAdapter`: Implements `PaymentGatewayPort` using Stripe Java SDK.
 * **PDF Rendering Standard:** Strictly standardizes on **`OpenPDF`** (LGPL/MPL compliant fork of iText). Alternatives such as proprietary iText versions are forbidden in V1.
 
+---
+
+## 8. Wire Format Representation of Money (P1-06)
+
+To prevent rounding and floating-point errors across React Web, Android clients, and third-party gateways:
+1. **Database Storage:** Stored as `NUMERIC(12, 2)` in PostgreSQL.
+2. **Java Backend Representation:** Mapped to `java.math.BigDecimal` with explicit scale 2 (`RoundingMode.HALF_UP`).
+3. **REST API JSON Representation:** Standardized on explicit decimal string format:
+   ```json
+   {
+     "amount": "1499.00",
+     "currency": "INR"
+   }
+   ```
+   *Floating-point JSON numbers (e.g. `1499.0`) are strictly forbidden in financial APIs.*
+
+---
+
+## 9. Scheduled Gateway Polling & Payment Reconciliation (P1-03)
+
+Payment correctness does not rely exclusively on webhook delivery.
+1. **Automated Poller:** A Spring `@Scheduled(cron = "0 */15 * * * *")` poller identifies payments stuck in `PENDING` status for more than 30 minutes.
+2. **Gateway State Check:** The poller invokes `PaymentGatewayPort.fetchPaymentDetails(gatewayPaymentId)` to query the authoritative gateway status.
+3. **Convergence:**
+   - Captured $\rightarrow$ transitions `PaymentStatus.PAID` and emits `PaymentCompleted` outbox event.
+   - Failed/Cancelled $\rightarrow$ transitions `PaymentStatus.FAILED`.
+   - Still Unpaid $\rightarrow$ expires after 72 hours.
+
+

@@ -25,8 +25,10 @@ To support both self-service customer checkout and multi-technician dispatching 
    - At booking confirmation: 1 capacity unit is deducted from the Agency Capacity Pool. The booking is `CONFIRMED`.
    - During dispatch window: The Dispatcher or Auto-Dispatch algorithm creates/assigns an operational `WorkOrder` and `ServiceVisit` to a specific, certified `Employee`. This decouples commercial booking confirmation from physical technician assignment.
 
-### 1.2 Schema Definition & Database-Enforced Invariants
+### 1.2 Schema Definition & Database-Enforced Exclusion Constraints
 ```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
 CREATE TABLE availability_slots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
@@ -35,20 +37,24 @@ CREATE TABLE availability_slots (
     service_date DATE NOT NULL,
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
+    slot_range TSRANGE GENERATED ALWAYS AS (
+        tsrange((service_date + start_time)::timestamp, (service_date + end_time)::timestamp, '[)')
+    ) STORED,
     capacity INTEGER NOT NULL DEFAULT 1,
     booked_count INTEGER NOT NULL DEFAULT 0,
     is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_slot_time_valid CHECK (start_time < end_time),
     CONSTRAINT chk_slot_capacity_positive CHECK (capacity > 0),
     CONSTRAINT chk_slot_booked_nonneg CHECK (booked_count >= 0),
-    CONSTRAINT chk_slot_capacity CHECK (booked_count <= capacity)
+    CONSTRAINT chk_slot_capacity CHECK (booked_count <= capacity),
+    -- PostgreSQL GiST Exclusion Constraint: Mathematically prevents overlapping time ranges for named technicians (P0-01)
+    CONSTRAINT ex_slot_employee_time_overlap EXCLUDE USING gist (
+        employee_id WITH =,
+        slot_range WITH &&
+    ) WHERE (employee_id IS NOT NULL AND is_blocked = FALSE)
 );
-
--- Unique index for Named Technician schedules (prevents assigning tech to overlapping slots)
-CREATE UNIQUE INDEX uq_slot_employee_time 
-ON availability_slots(employee_id, service_date, start_time) 
-WHERE employee_id IS NOT NULL;
 
 -- Unique index for Agency Capacity Pools (prevents duplicate capacity pools for the same service category)
 CREATE UNIQUE INDEX uq_slot_agency_pool 
@@ -248,8 +254,25 @@ POST /api/v1/payments/webhooks/{provider}
        WHERE provider = :provider AND gateway_event_id = :eventId;
        RETURN HTTP 500 Internal Server Error; -- Triggers gateway backoff retry
 
-  5. Return HTTP 200 OK to gateway.
-```
+---
+
+### 3.3 Payment Gateway Scheduled Reconciliation (P1-03)
+
+Payment correctness does not depend exclusively on webhook delivery. To protect against lost, delayed, or out-of-order webhooks:
+1. **Reconciliation Poller:** A Spring `@Scheduled` background worker runs every 15 minutes:
+   ```sql
+   SELECT * FROM payments 
+   WHERE payment_method = 'ONLINE_GATEWAY' 
+     AND status = 'PENDING' 
+     AND created_at < (NOW() - INTERVAL '30 minutes')
+     AND created_at > (NOW() - INTERVAL '72 hours')
+   FOR UPDATE SKIP LOCKED;
+   ```
+2. **Gateway State Verification:** For each stuck payment, the worker queries the gateway API (`GET /v1/orders/{gateway_order_id}/payments` on Razorpay or Stripe PaymentIntents API).
+3. **State Convergence:**
+   - If gateway reports captured/succeeded $\rightarrow$ executes authoritative payment completion transition and writes outbox event `PaymentCompleted`.
+   - If gateway reports failed/expired $\rightarrow$ transitions payment to `FAILED`.
+   - If gateway reports still unpaid $\rightarrow$ remains `PENDING` until 72-hour expiration window closes.
 
 ---
 
@@ -301,19 +324,57 @@ ON outbox_events(publication_status, created_at)
 WHERE publication_status = 'PENDING';
 ```
 
-### 4.4 RabbitMQ Message Ordering & Mandatory Consumer Idempotency
-1. **Ordering Guarantee Strategy:** While RabbitMQ delivers messages across distributed worker threads, message ordering per business entity is guaranteed by:
-   - Routing keys formatted with aggregate identifier: `pestcontrol.events.<module>.<entity_type>.<aggregate_id>`.
-   - Consumer validation of payload version / entity timestamp to discard out-of-order stale events.
-2. **Mandatory Consumer Idempotency:** Every consumer listener (Notifications, Invoicing, AMC, Support) MUST maintain an idempotent processing check (e.g. checking `inbox_events` or evaluating current entity state) prior to side-effect execution.
+### 4.4 RabbitMQ Consumer Idempotency & Inbox Pattern (P1-04)
+
+Every material, side-effecting domain consumer (Notifications, Invoicing, AMC, Inventory Alerting) implements the canonical **Inbox Pattern** to guarantee exactly-once business side effects under at-least-once message delivery:
+
+```sql
+CREATE TABLE inbox_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    consumer_name VARCHAR(100) NOT NULL,
+    event_id UUID NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    payload JSONB,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED',
+    error_message TEXT,
+    CONSTRAINT uq_consumer_event UNIQUE (consumer_name, event_id)
+);
+CREATE INDEX idx_inbox_consumer ON inbox_events(consumer_name, event_id);
+```
+
+**Consumer Execution Workflow:**
+```text
+RabbitMQ Message Received (event_id, event_type, payload)
+  │
+  ├── 1. BEGIN TRANSACTION
+  ├── 2. INSERT INTO inbox_events(consumer_name, event_id, event_type, payload)
+  │      VALUES (:consumerName, :eventId, :eventType, :payload)
+  │      ON CONFLICT (consumer_name, event_id) DO NOTHING;
+  │
+  ├── 3. IF rows_affected == 0 THEN
+  │        ROLLBACK;
+  │        ACK message to RabbitMQ (duplicate message suppressed);
+  │        RETURN;
+  │      END IF;
+  │
+  ├── 4. Execute domain side effect (e.g. generate invoice, send push alert)
+  └── 5. COMMIT TRANSACTION
+```
 
 ---
 
-## 5. Offline Field Operation Idempotency & Conflict Schema
+## 5. Offline Field Operation Idempotency, Security & Conflict Schema
 
 Technician mobile apps execute actions offline in local SQLite/Room storage.
 
-### 5.1 Operation Envelope Structure
+### 5.1 Cryptographic Trust Model & Device-Bound Payload Signing (P0-02)
+To secure offline mutations against tampering, client replay, and rogue device injection:
+1. **Device Enrollment:** Upon login, the Technician App generates an **EC P-256 Keypair inside the hardware-backed Android Keystore**. The public key is registered in PostgreSQL under `technician_devices(device_id, public_key_pem)`.
+2. **High-Risk Operation Signing:** For critical field operations (`START_VISIT`, `COMPLETE_VISIT`, `LOG_CHEMICALS`), the device signs the serialized operation payload (`SHA256withECDSA`) using the Keystore private key, sending the signature in the `X-Device-Signature` HTTP header.
+3. **Server Verification:** The sync controller verifies the cryptographic signature against the stored device public key before executing the business transaction.
+
+### 5.2 Operation Envelope Structure
 Each queued mobile mutation generates a deterministic action record:
 - `operation_id` (UUID v4): Unique client-generated idempotency key for the atomic action.
 - `device_id` (UUID): Registered hardware device identifier linked to the technician.
@@ -321,8 +382,9 @@ Each queued mobile mutation generates a deterministic action record:
 - `client_created_at` (TIMESTAMPTZ): Device clock timestamp when the physical action occurred.
 - `operation_type` (VARCHAR): e.g. `START_VISIT`, `COMPLETE_VISIT`, `LOG_CHEMICALS`.
 - `payload` (JSONB): Action parameters.
+- `payload_version` (INT): Schema version of the payload (enables server backward compatibility, P2-05).
 
-### 5.2 Server Sync Handler & Conflict Tracking
+### 5.3 Server Sync Handler & Conflict Tracking
 ```sql
 CREATE TABLE sync_conflicts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -331,7 +393,7 @@ CREATE TABLE sync_conflicts (
     agency_id UUID NOT NULL REFERENCES agencies(id),
     entity_type VARCHAR(100) NOT NULL, -- 'SERVICE_VISIT', 'WORK_ORDER'
     entity_id UUID NOT NULL,
-    conflict_type VARCHAR(50) NOT NULL, -- 'CLIENT_OVERRIDE_ON_CANCELLED', 'STALE_STATE_COLLISION'
+    conflict_type VARCHAR(50) NOT NULL, -- 'CLIENT_OVERRIDE_ON_CANCELLED', 'STALE_STATE_COLLISION', 'EXPIRED_BATCH_USED'
     client_state JSONB NOT NULL,
     server_state JSONB NOT NULL,
     resolution_status VARCHAR(50) NOT NULL DEFAULT 'OPEN', -- 'OPEN', 'AUTO_RESOLVED', 'MANUALLY_RESOLVED'
@@ -343,12 +405,13 @@ CREATE TABLE sync_conflicts (
 
 CREATE INDEX idx_sync_conflicts_agency ON sync_conflicts(agency_id, resolution_status);
 ```
-1. Validate device registration and JWT employee identity.
+1. Validate device registration, JWT employee identity, and Keystore `X-Device-Signature`.
 2. Process queued operations in strict `local_sequence` order.
 3. Check `operation_id` against `offline_sync_logs`:
    - If `operation_id` is already logged as processed -> Return previous result (safe replay).
    - If `operation_id` is new -> Execute domain operation in a database transaction and log `operation_id`.
-4. Conflict Handling: Completed physical field work conflicting with server cancellation is recorded in `sync_conflicts` for manager audit; it NEVER silently overwrites authoritative server state.
+4. Conflict Handling: Completed physical field work conflicting with server cancellation or stock expiration is recorded in `sync_conflicts` for manager audit; it NEVER silently overwrites authoritative server state.
+
 
 ---
 

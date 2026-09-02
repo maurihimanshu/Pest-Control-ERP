@@ -148,6 +148,25 @@ To prevent unauthorized offline replay attacks and credential sharing:
    - On explicit technician logout: All cached offline visit data and session tokens are purged from Room.
    - On remote session revocation / tampering detection (Play Integrity failure): The app executes a complete local database file destruction.
 
+### 6.3 Hardware-Backed Device Payload Signing (P0-02)
+To secure offline operations against replay and payload tampering:
+1. **Keystore Keypair:** Upon device registration, the Technician App generates an **EC P-256 Keypair** in the Android Keystore with `KeyGenParameterSpec.Builder(KeyProperties.PURPOSE_SIGN)`.
+2. **Device Signature Header:** For critical mutations (`START_VISIT`, `COMPLETE_VISIT`, `LOG_CHEMICALS`), the device signs the normalized JSON body and attaches `X-Device-Signature: <base64-signature>` along with `X-Device-Id: <device-uuid>`.
+3. **Server Verification:** `OfflineSyncController` validates the cryptographic signature using the technician's registered public key prior to executing database mutations.
+
+---
+
+## 7. Multi-Tenant Defense-in-Depth via PostgreSQL RLS (P0-03)
+
+In addition to Spring Security filter checks and repository query scoping:
+1. **Session Scope Binding:** For each authenticated HTTP request, a Spring Security interceptor / Hibernate connection hook sets PostgreSQL session parameters:
+   ```sql
+   SET LOCAL app.current_agency_id = '<agency-uuid>';
+   SET LOCAL app.is_super_admin = 'false';
+   ```
+2. **PostgreSQL RLS Enforcement:** Tables like `work_orders`, `service_visits`, `sync_conflicts`, and `inventory_transactions` enforce Row Level Security, preventing accidental cross-tenant data leakage even in the event of an application-layer query bug.
+
 ---
 
 *Governed by Spring Security 6 standards, Android Keystore hardware security, and enterprise identity protocols.*
+

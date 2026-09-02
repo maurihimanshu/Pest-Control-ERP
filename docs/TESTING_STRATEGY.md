@@ -87,6 +87,46 @@ The test suite must explicitly validate non-negotiable enterprise business invar
 11. **Transactional Outbox At-Least-Once Delivery:** Outbox relay worker survives simulated message broker restarts without losing pending events or producing phantom events.
 12. **Sequential Invoice Numbering Concurrency:** High-concurrency invoice generation produces strictly sequential `INV-YYYY-NNNNN` numbers without gaps or duplicate numbers.
 
+## 6. First Vertical Slice Executable Test Specification
+
+Before implementing subsequent ERP submodules, the engineering team must implement and validate the following **Core Business Vertical Slice Test**:
+
+```text
+Customer Service Selection
+       ↓
+Atomic Capacity Reservation (PostgreSQL SELECT FOR UPDATE)
+       ↓
+Payment Authorization (Prepaid Razorpay / COD PENDING)
+       ↓
+Booking Confirmation (BookingConfirmed Outbox Event)
+       ↓
+Work Order Creation & Dispatch Assignment (TechnicianAssigned)
+       ↓
+Service Visit Scheduling
+       ↓
+Offline Mobile Field Execution (CameraX WebP, Chemical Usage, Keystore Signature)
+       ↓
+Idempotent Offline Synchronization (/api/v1/dispatch/visits/sync)
+       ↓
+Transactional Material Deduction (InventoryStockService in PostgreSQL)
+       ↓
+Service Visit Completion (ServiceVisitCompleted Outbox Event)
+       ↓
+Automated OpenPDF Invoice Generation (INV-YYYY-NNNNN in S3)
+       ↓
+Notification Multicast (FCM / SMS)
+```
+
+### Test Case Suite for First Vertical Slice:
+1. **`V-SLICE-01` Happy Path End-to-End:** Validates complete lifecycle from booking checkout to S3 PDF invoice delivery and notification dispatch.
+2. **`V-SLICE-02` Concurrent Slot Booking Race:** 10 concurrent threads attempt to reserve the 1 remaining slot in an agency capacity pool; exactly 1 succeeds, 9 fail with `409 Conflict`.
+3. **`V-SLICE-03` Technician Time-Range Overlap Guard:** Verifies that assigning a named technician to an overlapping time window (e.g. 10:00–11:30 and 11:00–12:30) is rejected by PostgreSQL `ex_slot_employee_time_overlap` GiST exclusion constraint.
+4. **`V-SLICE-04` Offline Sync with Keystore Signature:** Validates that field completion signed with device EC P-256 keypair is verified and committed; tampered payloads are rejected with HTTP 401.
+5. **`V-SLICE-05` Webhook Reconciliation Under Network Drop:** Webhook delivery is blocked; scheduled reconciliation poller queries Razorpay mock API after 30 minutes and successfully converges payment to `PAID`.
+6. **`V-SLICE-06` Consumer Inbox Deduplication:** RabbitMQ delivers duplicate `ServiceVisitCompleted` events; `inbox_events` ensures exactly one invoice is generated.
+7. **`V-SLICE-07` Multi-Tenant Isolation (RLS):** Agency Manager B attempts to query Agency A's work orders; PostgreSQL Row Level Security returns 0 rows.
+
 ---
 
 *Governed by enterprise software quality, automated Testcontainers integration, and continuous integration standards.*
+

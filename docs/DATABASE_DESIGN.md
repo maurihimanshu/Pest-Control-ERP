@@ -479,6 +479,8 @@ FOR EACH ROW EXECUTE FUNCTION trg_audit_logs_immutable();
 -- Availability Slots (Two-tier booking slot capacity model)
 -- employee_id IS NULL: Agency Capacity Pool for service category/territory (capacity >= 1)
 -- employee_id IS NOT NULL: Named Technician Calendar Schedule (capacity = 1)
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
 CREATE TABLE availability_slots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     agency_id UUID NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
@@ -487,20 +489,23 @@ CREATE TABLE availability_slots (
     service_date DATE NOT NULL,
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
+    slot_range TSRANGE GENERATED ALWAYS AS (
+        tsrange((service_date + start_time)::timestamp, (service_date + end_time)::timestamp, '[)')
+    ) STORED,
     capacity INTEGER NOT NULL DEFAULT 1,
     booked_count INTEGER NOT NULL DEFAULT 0,
     is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_slot_time_valid CHECK (start_time < end_time),
     CONSTRAINT chk_slot_capacity_positive CHECK (capacity > 0),
     CONSTRAINT chk_slot_booked_nonneg CHECK (booked_count >= 0),
-    CONSTRAINT chk_slot_capacity CHECK (booked_count <= capacity)
+    CONSTRAINT chk_slot_capacity CHECK (booked_count <= capacity),
+    CONSTRAINT ex_slot_employee_time_overlap EXCLUDE USING gist (
+        employee_id WITH =,
+        slot_range WITH &&
+    ) WHERE (employee_id IS NOT NULL AND is_blocked = FALSE)
 );
-
--- Unique index for Named Technician schedules (prevents overlapping assignments)
-CREATE UNIQUE INDEX uq_slot_employee_time
-    ON availability_slots(employee_id, service_date, start_time)
-    WHERE employee_id IS NOT NULL;
 
 -- Unique index for Agency Capacity Pools
 CREATE UNIQUE INDEX uq_slot_agency_pool
@@ -556,6 +561,20 @@ CREATE TABLE outbox_events (
 CREATE INDEX idx_outbox_pending ON outbox_events(publication_status, created_at)
     WHERE publication_status = 'PENDING';
 
+-- Inbox Events (idempotent RabbitMQ consumer processing ledger)
+CREATE TABLE inbox_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    consumer_name VARCHAR(100) NOT NULL,
+    event_id UUID NOT NULL,
+    event_type VARCHAR(100) NOT NULL,
+    payload JSONB,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED',
+    error_message TEXT,
+    CONSTRAINT uq_consumer_event UNIQUE (consumer_name, event_id)
+);
+CREATE INDEX idx_inbox_consumer ON inbox_events(consumer_name, event_id);
+
 -- Offline Sync Logs (idempotent device action replay detection)
 CREATE TABLE offline_sync_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -605,8 +624,47 @@ CREATE TABLE idempotency_keys (
 );
 CREATE INDEX idx_idempotency_lookup ON idempotency_keys(agency_id, user_id, request_path, key);
 CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
+
+---
+
+### 3.9 Multi-Tenant Defense-in-Depth (PostgreSQL Row Level Security)
+
+In addition to repository-level `findBy...AndAgencyId` query isolation, PostgreSQL Row Level Security (RLS) is enabled on all agency-scoped tables as architectural defense-in-depth:
+
+```sql
+-- Application connection sets local session parameter on each request:
+-- SET LOCAL app.current_agency_id = '<agency-uuid>';
+-- SET LOCAL app.is_super_admin = 'false';
+
+ALTER TABLE work_orders ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rls_work_orders_agency ON work_orders
+    FOR ALL
+    USING (
+        current_setting('app.is_super_admin', true) = 'true'
+        OR agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
+    );
+
+ALTER TABLE service_visits ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rls_service_visits_agency ON service_visits
+    FOR ALL
+    USING (
+        current_setting('app.is_super_admin', true) = 'true'
+        OR work_order_id IN (
+            SELECT id FROM work_orders 
+            WHERE agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
+        )
+    );
+
+ALTER TABLE sync_conflicts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY rls_sync_conflicts_agency ON sync_conflicts
+    FOR ALL
+    USING (
+        current_setting('app.is_super_admin', true) = 'true'
+        OR agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid
+    );
 ```
 
 ---
 
 *This database schema serves as the single source of truth for Flyway migration scripts.*
+

@@ -206,6 +206,53 @@ When critical state mutations occur in Spring Boot, transactional events are pub
 
 ---
 
+## 8. File Upload Security & Offline Media Lifecycle (P1-07, P1-08)
+
+### 8.1 File Upload Security Policy
+To protect against malicious uploads, file size exhaustion, and corrupted attachments:
+- **Maximum File Sizes:** Photos/Images $\le 10\text{ MB}$, PDF Documents $\le 20\text{ MB}$.
+- **Allowed MIME Types:** `image/jpeg`, `image/png`, `image/webp`, `application/pdf`.
+- **Validation Pipeline:**
+  1. Content-Type header inspection + file extension check.
+  2. Server-side Magic Byte verification (e.g. `0xFFD8FFE0` for JPEG, `%PDF-` for PDF) upon pre-signed URL verification or attachment.
+  3. SHA-256 Checksum verification matching client-provided hash with object storage ETag/metadata.
+  4. Automatic EXIF GPS/metadata extraction with location normalization.
+  5. Orphan cleanup: Unattached `INITIATED` records older than 24 hours are purged automatically via daily scheduled cleaner.
+
+### 8.2 Offline Media 7-Stage State Machine (P1-08)
+Field photos (before/after treatment photos, customer signatures) captured in zero-connectivity environments transition through a deterministic lifecycle:
+
+```text
+[LOCAL_CAPTURE] ──► Captured by CameraX to private app storage sandbox
+       │
+       ▼
+[LOCAL_VALIDATED] ──► Size, aspect ratio, and SHA-256 hash verified locally
+       │
+       ▼
+[UPLOAD_PENDING] ──► Queued in Room DB for background upload by WorkManager
+       │
+       ▼
+  [UPLOADING] ──► Uploading to Presigned S3 URL via background Worker
+       │
+       ├────────────────────────────────────────┐
+       │ (Upload Succeeds)                      │ (Upload Fails / Network Lost)
+       ▼                                        ▼
+   [UPLOADED]                            [UPLOAD_PENDING] (WorkManager backoff retry)
+       │
+       ▼
+   [VERIFIED] ──► Backend confirms object exists in S3 & matches SHA-256 checksum
+       │
+       ▼
+   [ATTACHED] ──► Linked permanently to ServiceVisit in PostgreSQL; local cached file deleted
+```
+
+**Mobile Device Edge Case Behaviors:**
+1. **Device Storage Exhaustion:** CameraX compresses images dynamically to WebP ($\le 1.5\text{ MB}$) with local storage quotas ($\le 500\text{ MB}$ total cached media); warns technician when device disk space drops below $100\text{ MB}$.
+2. **App Termination / Device Reboot:** WorkManager constraints (`NetworkType.CONNECTED`) automatically resume pending uploads without creating duplicates.
+3. **Logout with Unsynced Media:** The app explicitly warns the technician and blocks voluntary logout until all `UPLOAD_PENDING` media are synchronized, or prompts for supervisor override.
+
+---
+
 *This architecture document governs all module designs, database schemas, and API contracts.*
 
 ## Implementation Status
@@ -220,3 +267,4 @@ When critical state mutations occur in Spring Boot, transactional events are pub
 | Admin React Web App | 🔲 Not Yet Implemented |
 
 This repository serves as the complete architecture baseline and implementation specification.
+

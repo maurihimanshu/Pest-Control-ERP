@@ -233,3 +233,31 @@ Managed exclusively by the backend in the `payments` module:
 4. Booking immediately re-evaluates to `IN_PROGRESS` while WO2 is open.
 5. Tech executes SV2 for WO2 $\rightarrow$ WO2 `COMPLETED`.
 6. ALL Work Orders (WO1, WO2) are now `COMPLETED` $\rightarrow$ Booking transitions to `COMPLETED` (and `CLOSED`).
+
+---
+
+## 7. Cross-Aggregate State Invariant Matrix (P0-04)
+
+The platform enforces strict simultaneous state legality across domain aggregates:
+
+| Booking Status | Legal WorkOrder States | Legal ServiceVisit States | Legal Payment States | Strictly Forbidden Combinations / Invariants |
+| :--- | :--- | :--- | :--- | :--- |
+| **`PENDING`** | *(None created)* | *(None created)* | `PENDING`, `AUTHORIZED`, `FAILED` | Cannot have Work Orders or Service Visits. Cannot be `PAID`. |
+| **`CONFIRMED`** | `ASSIGNED` | `SCHEDULED` | `PENDING` (COD), `AUTHORIZED`, `PAID` | Cannot have visits in `STARTED` or `COMPLETED`. Cannot have `FAILED` payments unless COD. |
+| **`ASSIGNED`** | `ASSIGNED`, `ACCEPTED` | `SCHEDULED` | `PENDING` (COD), `AUTHORIZED`, `PAID` | Cannot have visits in `STARTED` or `COMPLETED`. |
+| **`IN_PROGRESS`** | `ACCEPTED`, `ON_THE_WAY`, `ARRIVED`, `STARTED`, `COMPLETED` (if multi-order) | `ON_THE_WAY`, `ARRIVED`, `STARTED`, `FAILED`, `COMPLETED` (if other open) | `PENDING` (COD), `AUTHORIZED`, `PAID`, `PARTIAL` | Cannot be `CLOSED` or `CANCELLED`. Cannot have all child visits terminal without Booking progressing. |
+| **`COMPLETED`** | All child WOs must be `COMPLETED` (or `CANCELLED`) | All child SVs must be `COMPLETED` (or `CANCELLED`) | `PENDING` (COD uncollected), `AUTHORIZED`, `PAID`, `PARTIAL` | **Strict Invariant:** Cannot have any active Work Order (`ASSIGNED`, `STARTED`) or active Visit (`ON_THE_WAY`, `STARTED`). |
+| **`CLOSED`** | `COMPLETED` (or `CANCELLED`) | `COMPLETED` (or `CANCELLED`) | `PAID`, `REFUNDED`, `PARTIALLY_REFUNDED` | Cannot be `CLOSED` with `payment_status = 'PENDING'` (unless bad debt written off) or open work orders. |
+| **`CANCELLED`** | `CANCELLED` (or None) | `CANCELLED` (or None) | `PENDING`, `REFUNDED`, `FAILED` | **Strict Invariant:** Cannot have any active or started Work Order/Visit. `COMPLETED → CANCELLED` is strictly impossible. |
+
+---
+
+## 8. Multi-Service Booking Capacity Semantics (P1-02)
+
+To avoid ambiguity in slot reservation:
+1. **Commercial Booking Item vs. Physical Resource Requirement:**
+   - A commercial `Booking` may contain multiple service line items (e.g. *General Pest Control* + *Cockroach Gel Treatment*).
+   - **Default Co-located Treatment:** When multiple services are booked for the **same customer address, same date, and same time window**, they represent a **single physical technician visit** and deduct **exactly 1 capacity unit** from the territorial Agency Capacity Pool.
+   - **Multi-Visit Packages:** When a package explicitly defines multiple phased visits (e.g. *Termite Treatment Stage 1* on Day 0 and *Stage 2* on Day 15), each scheduled visit independently reserves **1 capacity unit** for its respective date and time slot upon scheduling.
+2. **Skill & Resource Allocation:** The total estimated duration of all bundled items is aggregated to ensure technician availability spans the entire duration without overlap.
+
