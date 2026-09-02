@@ -219,8 +219,8 @@ CREATE TABLE bookings (
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
     customer_address_id UUID NOT NULL REFERENCES customer_addresses(id) ON DELETE RESTRICT,
     agency_id UUID REFERENCES agencies(id) ON DELETE SET NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'CONFIRMED', 'CANCELLED', 'CLOSED'
-    payment_status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- PaymentStatus: PENDING, AUTHORIZED, PAID, PARTIAL, FAILED, REFUNDED, PARTIALLY_REFUNDED
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    payment_status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
     scheduled_date DATE NOT NULL,
     scheduled_time_slot VARCHAR(50) NOT NULL,
     subtotal_amount NUMERIC(12, 2) NOT NULL,
@@ -231,7 +231,9 @@ CREATE TABLE bookings (
     customer_notes TEXT,
     cancellation_reason TEXT,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_booking_status CHECK (status IN ('PENDING', 'CONFIRMED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'CLOSED')),
+    CONSTRAINT chk_booking_payment_status CHECK (payment_status IN ('PENDING', 'AUTHORIZED', 'PAID', 'PARTIAL', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED'))
 );
 
 CREATE INDEX idx_bookings_cust ON bookings(customer_id);
@@ -255,11 +257,12 @@ CREATE TABLE work_orders (
     booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
     agency_id UUID REFERENCES agencies(id) ON DELETE SET NULL,
     order_type VARCHAR(50) NOT NULL DEFAULT 'INITIAL_SERVICE', -- 'INITIAL_SERVICE', 'AMC_ROUTINE', 'WARRANTY_VISIT'
-    status VARCHAR(50) NOT NULL DEFAULT 'UNASSIGNED', -- 'UNASSIGNED', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'
+    status VARCHAR(50) NOT NULL DEFAULT 'ASSIGNED',
     priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL', -- 'NORMAL', 'URGENT', 'CRITICAL'
     assigned_employee_id UUID REFERENCES employees(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_work_order_status CHECK (status IN ('ASSIGNED', 'ACCEPTED', 'REJECTED', 'ON_THE_WAY', 'ARRIVED', 'STARTED', 'COMPLETED', 'CANCELLED'))
 );
 
 CREATE INDEX idx_work_orders_employee ON work_orders(assigned_employee_id);
@@ -272,8 +275,6 @@ CREATE TABLE service_visits (
     work_order_id UUID NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
     primary_employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE RESTRICT,
     status VARCHAR(30) NOT NULL DEFAULT 'SCHEDULED',
-    -- ServiceVisitStatus: SCHEDULED, ON_THE_WAY, ARRIVED, STARTED, COMPLETED, CANCELLED, FAILED
-    -- NOTE: This is a SEPARATE state machine from WorkOrderStatus
     scheduled_start_time TIMESTAMP WITH TIME ZONE NOT NULL,
     actual_arrival_time TIMESTAMP WITH TIME ZONE,
     actual_start_time TIMESTAMP WITH TIME ZONE,
@@ -286,7 +287,8 @@ CREATE TABLE service_visits (
     sync_status VARCHAR(30) NOT NULL DEFAULT 'SYNCED', -- 'SYNCED', 'OFFLINE_PENDING'
     offline_event_id VARCHAR(128),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_service_visit_status CHECK (status IN ('SCHEDULED', 'ON_THE_WAY', 'ARRIVED', 'STARTED', 'COMPLETED', 'CANCELLED', 'FAILED'))
 );
 
 CREATE INDEX idx_service_visits_employee ON service_visits(primary_employee_id);
@@ -419,6 +421,10 @@ CREATE TABLE amc_schedules (
 -- Polymorphic File Metadata with Lifecycle Management
 -- Allowed entity_type: 'WORK_ORDER', 'SERVICE_VISIT', 'INVOICE', 'EXPENSE', 'CUSTOMER', 'EMPLOYEE'
 -- Allowed file_purpose: 'BEFORE_PHOTO', 'AFTER_PHOTO', 'SIGNATURE', 'INVOICE_PDF', 'RECEIPT', 'PROFILE_IMAGE'
+-- access_policy semantics:
+--   'PRIVATE': Accessible only by the owning user (or assigned technician) and Super Admin.
+--   'AGENCY':  Accessible by all authenticated employees within the same agency_id.
+--   'PUBLIC':   Publicly accessible via CDN / presigned URL (e.g. service catalog photos).
 CREATE TABLE file_metadata (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     agency_id UUID REFERENCES agencies(id) ON DELETE RESTRICT,
@@ -433,9 +439,11 @@ CREATE TABLE file_metadata (
     checksum_sha256 VARCHAR(64),
     file_status VARCHAR(20) NOT NULL DEFAULT 'INITIATED', -- 'INITIATED', 'UPLOADING', 'UPLOADED', 'VERIFIED', 'ATTACHED', 'FAILED', 'ORPHANED'
     uploaded_by UUID REFERENCES users(id),
-    access_policy VARCHAR(50) NOT NULL DEFAULT 'PRIVATE',  -- 'PRIVATE', 'AGENCY'
+    access_policy VARCHAR(50) NOT NULL DEFAULT 'PRIVATE',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_file_access_policy CHECK (access_policy IN ('PRIVATE', 'AGENCY', 'PUBLIC')),
+    CONSTRAINT chk_file_status CHECK (file_status IN ('INITIATED', 'UPLOADING', 'UPLOADED', 'VERIFIED', 'ATTACHED', 'FAILED', 'ORPHANED'))
 );
 CREATE INDEX idx_file_metadata_entity ON file_metadata(entity_type, entity_id);
 CREATE INDEX idx_file_metadata_agency ON file_metadata(agency_id);
@@ -448,19 +456,15 @@ CREATE TABLE audit_logs (
     actor_role VARCHAR(50) NOT NULL,
     action VARCHAR(100) NOT NULL, -- 'BOOKING_ASSIGNED', 'PRICE_CHANGED', 'INVOICE_ISSUED'
     entity_type VARCHAR(100) NOT NULL,
-    entity_id VARCHAR(100) NOT NULL,
-    old_value JSONB,
-    new_value JSONB,
-    ip_address VARCHAR(45),
-    user_agent VARCHAR(255),
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+    entity_id UUID NOT NULL,
+    old_state JSONB,
+    new_state JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
 CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX idx_audit_logs_actor ON audit_logs(actor_id);
 CREATE INDEX idx_audit_logs_created ON audit_logs(created_at);
 
--- Database-Level Immutability Enforcement for audit_logs
 CREATE OR REPLACE FUNCTION trg_audit_logs_immutable()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -483,11 +487,13 @@ CREATE TABLE availability_slots (
     service_date DATE NOT NULL,
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
-    capacity INTEGER NOT NULL DEFAULT 1 CHECK (capacity >= 1),
-    booked_count INTEGER NOT NULL DEFAULT 0 CHECK (booked_count >= 0),
+    capacity INTEGER NOT NULL DEFAULT 1,
+    booked_count INTEGER NOT NULL DEFAULT 0,
     is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_slot_capacity_positive CHECK (capacity > 0),
+    CONSTRAINT chk_slot_booked_nonneg CHECK (booked_count >= 0),
     CONSTRAINT chk_slot_capacity CHECK (booked_count <= capacity)
 );
 
@@ -527,7 +533,8 @@ CREATE TABLE payment_events (
     processed_at TIMESTAMPTZ,
     processing_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
     error_message TEXT,
-    CONSTRAINT uq_payment_event UNIQUE (provider, gateway_event_id)
+    CONSTRAINT uq_payment_event UNIQUE (provider, gateway_event_id),
+    CONSTRAINT chk_payment_event_status CHECK (processing_status IN ('PENDING', 'PROCESSING', 'PROCESSED', 'FAILED', 'SKIPPED'))
 );
 CREATE INDEX idx_payment_events_payment_id ON payment_events(payment_id);
 
@@ -543,10 +550,24 @@ CREATE TABLE outbox_events (
     published_at TIMESTAMPTZ,
     publication_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
     retry_count INT NOT NULL DEFAULT 0,
-    last_error TEXT
+    last_error TEXT,
+    CONSTRAINT chk_outbox_pub_status CHECK (publication_status IN ('PENDING', 'PUBLISHED', 'FAILED'))
 );
 CREATE INDEX idx_outbox_pending ON outbox_events(publication_status, created_at)
     WHERE publication_status = 'PENDING';
+
+-- Offline Sync Logs (idempotent device action replay detection)
+CREATE TABLE offline_sync_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id UUID NOT NULL,
+    operation_id UUID UNIQUE NOT NULL,
+    local_sequence BIGINT NOT NULL,
+    operation_type VARCHAR(50) NOT NULL,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    response_payload JSONB,
+    CONSTRAINT uq_device_local_seq UNIQUE (device_id, local_sequence)
+);
+CREATE INDEX idx_offline_sync_device ON offline_sync_logs(device_id, local_sequence);
 
 -- Offline Sync Conflicts (technician offline conflict resolution tracking)
 CREATE TABLE sync_conflicts (
@@ -556,7 +577,7 @@ CREATE TABLE sync_conflicts (
     agency_id UUID NOT NULL REFERENCES agencies(id),
     entity_type VARCHAR(100) NOT NULL, -- 'SERVICE_VISIT', 'WORK_ORDER'
     entity_id UUID NOT NULL,
-    conflict_type VARCHAR(50) NOT NULL, -- 'CLIENT_OVERRIDE_ON_CANCELLED', 'STALE_STATE_COLLISION'
+    conflict_type VARCHAR(50) NOT NULL, -- 'CLIENT_OVERRIDE_ON_CANCELLED', 'STALE_STATE_COLLISION', 'EXPIRED_BATCH_USED'
     client_state JSONB NOT NULL,
     server_state JSONB NOT NULL,
     resolution_status VARCHAR(50) NOT NULL DEFAULT 'OPEN', -- 'OPEN', 'AUTO_RESOLVED', 'MANUALLY_RESOLVED'

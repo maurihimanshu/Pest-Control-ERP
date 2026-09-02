@@ -164,6 +164,29 @@ def main():
         semantic_issues = run_semantic_lints(content, rel_path)
         errors.extend(semantic_issues)
 
+    # 3. Index File Consistency Check (_index.md)
+    index_file = os.path.join(skills_dir, '_index.md')
+    if os.path.exists(index_file):
+        with open(index_file, 'r', encoding='utf-8') as f:
+            index_content = f.read()
+
+        # Extract markdown links like [skill](./category/skill.md) or [`path`](./path)
+        indexed_links = set(re.findall(r'\[.*?\]\(\.\/([^\)]+\.md)\)', index_content))
+        
+        # Check that all actual skill files (except _index.md and _architecture_rules.md) are in _index.md
+        for file_path in all_files:
+            rel = os.path.relpath(file_path, skills_dir).replace('\\', '/')
+            if rel in ('_index.md', '_architecture_rules.md'):
+                continue
+            if rel not in indexed_links:
+                errors.append(f"_index.md: Missing index entry for skill '{rel}'")
+
+        # Check that all links in _index.md exist on disk
+        for link in indexed_links:
+            target_path = os.path.join(skills_dir, link.replace('/', os.sep))
+            if not os.path.exists(target_path):
+                errors.append(f"_index.md: Broken link to non-existent skill file '{link}'")
+
     print("\n" + "="*50)
     if errors:
         print(f"FAILED: Found {len(errors)} skill validation issues:")
@@ -171,9 +194,10 @@ def main():
             print(f"  [X] {err}")
         sys.exit(1)
     else:
-        print(f"SUCCESS: All {len(all_files)} skills passed structural and semantic architectural validation.")
+        print(f"SUCCESS: All {len(all_files)} skills passed structural, semantic, and _index.md validation.")
         sys.exit(0)
 
 if __name__ == '__main__':
     main()
+
 

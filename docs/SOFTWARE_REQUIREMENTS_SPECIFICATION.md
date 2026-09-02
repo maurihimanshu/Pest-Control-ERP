@@ -111,8 +111,8 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 │                        1. Commercial Request                            │
 │                              BOOKING                                    │
 │  • Customer Details, Target Address, Selected Services, Pricing Model  │
-│  • Canonical Status: PENDING, CONFIRMED, IN_PROGRESS, COMPLETED,        │
-│                     CANCELLED, CLOSED                                   │
+│  • Canonical Status: PENDING, CONFIRMED, ASSIGNED, IN_PROGRESS,         │
+│                     COMPLETED, CLOSED, CANCELLED                        │
 │  • Payment Settlement Status: PENDING, AUTHORIZED, PAID, PARTIAL, etc. │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │ 1 : N
@@ -161,7 +161,8 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 * **REQ-BKG-002:** The platform shall maintain availability slot capacity per agency territory and prevent overbooking by atomically reserving slot capacity within database transactions (`SELECT FOR UPDATE`).
 * **REQ-BKG-003:** For Cash on Delivery (COD) bookings, the platform shall confirm the booking upon slot reservation while keeping payment status as `PENDING`.
 * **REQ-BKG-004:** For Prepaid bookings, the platform shall confirm the booking only after server verification of successful payment authorization.
-* **REQ-BKG-005:** The platform shall support booking rescheduling and cancellation with automated slot capacity adjustments.
+* **REQ-BKG-005:** The platform shall support booking cancellation strictly prior to physical service travel/execution start (`PENDING`, `CONFIRMED`, `ASSIGNED`), releasing reserved slot capacity. Post-completion reversals shall be handled via billing adjustment and refund workflows rather than booking cancellation.
+* **REQ-BKG-006:** The platform shall support appointment rescheduling as an atomic slot reallocation without transitioning the commercial booking into a cancellation state.
 
 ## 6.5 Dispatch, Work Orders & Field Scheduling
 * **REQ-DSP-001:** The platform shall automatically generate an operational Work Order upon booking confirmation.
@@ -181,6 +182,7 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 * **REQ-PAY-003:** The platform shall support Cash on Delivery (COD) collection by field technicians with daily branch cash handover reconciliation workflows.
 * **REQ-PAY-004:** The platform shall generate immutable sequential PDF invoices (`INV-YYYY-NNNNN`) upon payment completion or service completion, uploading them to secure object storage and delivering them to the customer.
 * **REQ-PAY-005:** The platform shall maintain an authoritative payment lifecycle: `PENDING`, `AUTHORIZED`, `PAID`, `PARTIAL`, `FAILED`, `REFUNDED`, `PARTIALLY_REFUNDED`.
+* **REQ-PAY-006:** The platform shall support credit notes and partial/full refunds for completed services without modifying historical booking state.
 
 ## 6.8 Inventory & Chemical Management
 * **REQ-INV-001:** The platform shall track chemical products, regulatory pesticide registration numbers, and batch expiration dates enforcing First-In, First-Out (FIFO) consumption.

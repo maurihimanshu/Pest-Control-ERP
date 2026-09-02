@@ -18,7 +18,7 @@ The domain model is partitioned into aggregates that align directly with the 18 
   - `payment_transactions`: Gateway-level monetary movements (charges, refunds, transfers).
   - `payment_events`: Immutable incoming webhook audit observations.
   - `invoices`, `invoice_items`: Sequential billing records and line item breakdowns.
-- **Inventory Aggregate (`inventory` module)**: `chemical_products`, `chemical_batches`, `inventory_locations`, `inventory_transactions`, `service_material_usage`.
+- **Inventory Aggregate (`inventory` module)**: `chemical_products`, `chemical_batches`, `inventory_locations`, `inventory_transactions`, `service_material_usage`. (Note: `service_material_usage` is owned by Inventory as physical stock consumption ledgering, referenced by Dispatch visit completion).
 - **AMC Aggregate (`amc` module)**: `amc_contracts`, `amc_schedules`.
 - **Catalog Aggregate (`catalog` module)**: `service_categories`, `services`, `pricing_rules`, `pricing_tiers`.
 - **Customer Aggregate (`customers` module)**: `customers`, `customer_addresses`.
@@ -33,14 +33,16 @@ The domain model is partitioned into aggregates that align directly with the 18 
 ## 2. State Machines & Lifecycle Rules
 
 ### 1. Booking Status (Commercial Aggregate State)
-**Lifecycle**: `PENDING` $\rightarrow$ `CONFIRMED` $\rightarrow$ `IN_PROGRESS` $\rightarrow$ `COMPLETED` $\rightarrow$ `CLOSED` (or `CANCELLED`).
+**Lifecycle**: `PENDING` $\rightarrow$ `CONFIRMED` $\rightarrow$ `ASSIGNED` $\rightarrow$ `IN_PROGRESS` $\rightarrow$ `COMPLETED` $\rightarrow$ `CLOSED` (or `CANCELLED`).
 
 - **`PENDING`**: Initial checkout. Awaiting slot lock and (for prepaid) gateway payment authorization.
 - **`CONFIRMED`**: Slot capacity locked in PostgreSQL (`booked_count++`). For COD: `payment_status = 'PENDING'` is valid. For Prepaid: `payment_status` is `AUTHORIZED` or `PAID`. Work Order generated.
+- **`ASSIGNED`**: Qualified technician assigned to the initial Work Order by Dispatcher or auto-dispatch algorithm.
 - **`IN_PROGRESS`**: **Derived business state.** Set when any child Work Order / Service Visit is actively underway (`ACCEPTED`, `ON_THE_WAY`, `ARRIVED`, `STARTED`) or when an initial visit is completed while subsequent scheduled visits/work orders remain open.
 - **`COMPLETED`**: **Derived business state.** Set when ALL operational Work Orders associated with the booking have reached `COMPLETED` (or `CANCELLED`), all child Service Visits are terminal (`COMPLETED` or `CANCELLED`), and no operational work remains open.
 - **`CLOSED`**: Set when operational status is `COMPLETED` **AND** financial settlement is resolved (`payment_status = 'PAID'` or COD handover verified) **AND** final sequential PDF invoice is generated and linked.
-- **`CANCELLED`**: Cancelled prior to operational completion. Slot capacity released (`booked_count--`). Child Work Orders and Visits cancelled. Refund issued if prepaid.
+- **`CANCELLED`**: Cancelled prior to physical service execution start (`PENDING`, `CONFIRMED`, `ASSIGNED`). Slot capacity released (`booked_count--`). Child Work Orders and Visits cancelled. Refund issued if prepaid.
+- **Strict Invariant**: `COMPLETED → CANCELLED` is strictly forbidden. Reversals for completed services use Credit Notes and Refund workflows.
 
 ### 2. Work Order Status (Operational Dispatch State)
 **Lifecycle**: `ASSIGNED` $\rightarrow$ `ACCEPTED` $\rightarrow$ `REJECTED` $\rightarrow$ `ON_THE_WAY` $\rightarrow$ `ARRIVED` $\rightarrow$ `STARTED` $\rightarrow$ `COMPLETED` (or `CANCELLED`).
@@ -50,8 +52,8 @@ The domain model is partitioned into aggregates that align directly with the 18 
 ### 3. Service Visit Status (Field Execution State)
 **Lifecycle**: `SCHEDULED` $\rightarrow$ `ON_THE_WAY` $\rightarrow$ `ARRIVED` $\rightarrow$ `STARTED` $\rightarrow$ `COMPLETED` (or `FAILED` | `CANCELLED`).
 - Cardinality: 1 Work Order to N Service Visits (1:N). Supports failed visits, rescheduled revisits, warranty inspections, and multi-technician visits.
-- **`FAILED`**: Treatment attempted but blocked on-site (access denied, customer absent). Creates a NEW child `ServiceVisit` on the SAME Work Order.
-- **`COMPLETED`**: Service executed successfully. Executes **transactional inventory deduction** in the same PostgreSQL transaction with `SELECT ... FOR UPDATE` on `chemical_batches`, writes `service_material_usage`, and inserts `outbox_events(ServiceVisitCompleted)`.
+- **`FAILED`**: Treatment attempted but blocked on-site (access denied, customer absent). Creates a NEW child `ServiceVisit` on the SAME Work Order; the parent `Booking` remains active.
+- **`COMPLETED`**: Service executed successfully. Orchestrates **transactional inventory deduction** via `InventoryStockService` in the same PostgreSQL transaction with `SELECT ... FOR UPDATE` on `chemical_batches`, writes `service_material_usage`, and inserts `outbox_events(ServiceVisitCompleted)`.
 
 ### 4. Payment Status (Financial Settlement State)
 **Lifecycle**: `PENDING` $\rightarrow$ `AUTHORIZED` $\rightarrow$ `PAID` | `PARTIAL` | `FAILED`.  
@@ -74,14 +76,14 @@ The platform enforces a strict decouple-by-design progression from commercial co
 3. Booking Confirmation (Commercial Status -> CONFIRMED)
        │ (Emits outbox event: BookingConfirmed)
        ▼
-4. Operational Work Order Creation (Status -> ASSIGNED)
+4. Operational Work Order Creation & Assignment (Status -> ASSIGNED)
        │ (Dispatcher reviews board and assigns qualified Technician)
        ▼
 5. Service Visit Scheduling (Status -> SCHEDULED)
        │ (Technician accepts job in mobile app; transitions to ACCEPTED -> ON_THE_WAY)
        ▼
 6. Physical Execution & Completion (Status -> STARTED -> COMPLETED)
-       │ (Pessimistic inventory deduction + customer signature + outbox event ServiceVisitCompleted)
+       │ (Pessimistic inventory deduction via InventoryStockService + customer signature + outbox event ServiceVisitCompleted)
        ▼
 7. Financial Settlement & Invoicing (Payment -> PAID, Booking -> CLOSED)
 ```
@@ -92,11 +94,12 @@ The platform enforces a strict decouple-by-design progression from commercial co
 
 1. **Transactional Slot Capacity**: A booking can only transition to `CONFIRMED` if slot capacity is available in PostgreSQL and locked via `SELECT ... FOR UPDATE`.
 2. **Transactional Inventory Deductions**: Inventory deduction runs strictly inside the service visit completion transaction with row locks on `chemical_batches` (`CHECK (current_quantity_available >= 0)`). RabbitMQ is never used to trigger deductions.
-3. **Outbox Pattern Publication**: No business transaction may publish directly to RabbitMQ. Domain events are inserted into `outbox_events` in the same database transaction as the business mutation.
-4. **Authoritative Webhook Deduplication**: Webhook event processing relies solely on the unique constraint `(provider, gateway_event_id)` in `payment_events`.
+3. **Outbox Pattern Publication**: No business transaction may publish directly to RabbitMQ. Domain events are inserted into `outbox_events` in the same database transaction as the business mutation. Canonical event deduplication identity is `outbox_events.id` (UUID).
+4. **Authoritative Webhook Triaging**: Webhook event processing relies on `(provider, gateway_event_id)` with explicit triaging: `PROCESSED` (idempotent 200), `PROCESSING` (duplicate suppression), `FAILED` (allows retry on redelivery).
 5. **Technician Concurrency & Single Active Device**: A technician cannot accept or start a new job if they currently have another active job in `STARTED` status. Each technician is restricted to exactly ONE active registered device.
-6. **Immutable Invoices**: Invoice numbers from the PostgreSQL sequence (`INV-YYYY-NNNNN`) and invoice PDF documents are strictly immutable once issued.
-7. **Append-Only Audit Logs**: Rows in `audit_logs` can NEVER be updated or deleted. Enforced by database trigger.
+6. **Technician Authorization Scope**: Technicians are authorized to view both currently assigned active visits and historically completed visits where `service_visits.technician_id = :employeeId`.
+7. **Immutable Invoices**: Invoice numbers from the PostgreSQL sequence (`INV-YYYY-NNNNN`) and invoice PDF documents are strictly immutable once issued.
+8. **Append-Only Audit Logs**: Rows in `audit_logs` can NEVER be updated or deleted. Enforced by database trigger.
 
 ---
 
@@ -117,4 +120,3 @@ The platform enforces a strict decouple-by-design progression from commercial co
 | customers → coupon_redemptions | 1:N | `customer_id` | RESTRICT |
 | amc_contracts → amc_schedules | 1:N | `amc_contract_id` | RESTRICT |
 | dispatch → sync_conflicts | 1:N | `agency_id` | RESTRICT |
-`amc_contract_id` | RESTRICT |

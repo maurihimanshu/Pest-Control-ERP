@@ -91,6 +91,11 @@ All detailed specifications, architecture designs, database DDL schemas, API con
 | 📜 **Commercial License** | Proprietary and confidential enterprise software license terms and rights reservation. | [**`LICENSE`**](./LICENSE) |
 | 📜 **Code of Conduct** | Community pledge, inclusive professional standards, and enforcement guidelines. | [**`CODE_OF_CONDUCT.md`**](./CODE_OF_CONDUCT.md) |
 
+> **GOVERNANCE & PRECEDENCE INVARIANT:**  
+> 1. **Accepted ADRs ([`docs/adr/`](./docs/adr/)):** Define binding architectural decisions and design rationale.  
+> 2. **Canonical Specifications ([`docs/`](./docs/)):** Implement the decisions in the ADRs.  
+> 3. If any discrepancy exists between historical documents and an accepted ADR, **the accepted ADR is the binding authority**.
+
 ---
 
 ## 🛠️ Technology Stack & Standards

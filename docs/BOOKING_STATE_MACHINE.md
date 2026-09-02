@@ -20,11 +20,11 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 ├────────────────────────────────────────┤     ├────────────────────────────────────────┤
 │ • PENDING                              │     │ • ASSIGNED                             │
 │ • CONFIRMED                            │     │ • ACCEPTED                             │
-│ • IN_PROGRESS                          │     │ • REJECTED                             │
-│ • COMPLETED                            │     │ • ON_THE_WAY                           │
-│ • CLOSED                               │     │ • ARRIVED                              │
-│ • CANCELLED                            │     │ • STARTED                              │
-│                                        │     │ • COMPLETED                            │
+│ • ASSIGNED                             │     │ • REJECTED                             │
+│ • IN_PROGRESS                          │     │ • ON_THE_WAY                           │
+│ • COMPLETED                            │     │ • ARRIVED                              │
+│ • CLOSED                               │     │ • STARTED                              │
+│ • CANCELLED                            │     │ • COMPLETED                            │
 │                                        │     │ • CANCELLED                            │
 └────────────────────────────────────────┘     └────────────────────────────────────────┘
 
@@ -46,53 +46,72 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 
 ## 2. Commercial Booking Aggregate State Machine
 
-### 2.1 Derived Aggregate State Concept
-A `Booking` is the top-level commercial agreement. Its status is not a simple manual toggle; rather, while progressing through execution, **it acts as a derived business aggregate state** reflecting the collective progress of its child Work Orders, Service Visits, and Payment transactions.
+### 2.1 Derived Aggregate State Concept & Lifecycle Progression
+A `Booking` is the top-level commercial agreement. Its status is not an arbitrary manual toggle; rather, it progresses through execution as a derived business aggregate state reflecting the collective progress of its child Work Orders, Service Visits, and Payment transactions:
 
 ```text
        [ Customer Checkout ]
                  │
                  ▼
           ┌─────────────┐
-          │   PENDING   │
-          └──────┬──────┘
-                 │ (Payment Verified OR Cash-on-Delivery Slot Confirmed)
+          │   PENDING   │───────┐
+          └──────┬──────┘       │ (Pre-confirmation cancel)
+                 │              ▼
+                 │ (Slot Locked & Payment Authorized / COD Confirmed)
                  ▼
           ┌─────────────┐
-          │  CONFIRMED  │◄─────────────────────────────┐
-          └──────┬──────┘                              │ (Reschedule / Reopen)
-                 │ (Any child WO/Visit becomes Active) │
-                 ▼                                     │
-          ┌─────────────┐                              │
-          │ IN_PROGRESS │──────────────────────────────┘
-          └──────┬──────┘
+          │  CONFIRMED  │───────┐
+          └──────┬──────┘       │ (Pre-dispatch cancel)
+                 │              ▼
+                 │ (Technician Assigned by Dispatcher / Auto-Dispatch)
+                 ▼
+          ┌─────────────┐
+          │  ASSIGNED   │───────► ┌─────────────┐
+          └──────┬──────┘         │  CANCELLED  │
+                 │                └─────────────┘
+                 │ (Technician En Route / Visit In Progress)
+                 ▼
+          ┌─────────────┐
+          │ IN_PROGRESS │  <── (Execution exceptions spawn new child ServiceVisits,
+          └──────┬──────┘          NOT booking cancellation)
+                 │
                  │ (ALL Child Work Orders COMPLETED & all Visits Terminal)
                  ▼
           ┌─────────────┐
           │  COMPLETED  │ (Operational work done, awaiting financial settlement)
           └──────┬──────┘
-                 │ (Payment = PAID/Reconciled AND Final Invoice Issued)
+                 │
+                 │ (Payment = PAID/Reconciled AND Final Sequential Invoice Linked)
                  ▼
           ┌─────────────┐
           │   CLOSED    │ (Fully archived commercial contract)
           └─────────────┘
-                 ▲
-                 │ (Cancelled before visit start)
-          ┌──────┴──────┐
-          │  CANCELLED  │
-          └─────────────┘
 ```
 
-### 2.2 Formal State Aggregation Logic & Matrix
+### 2.2 Strict Invariants on Cancellation, Rescheduling & Reversals
+
+1. **Cancellation Window Invariant:**
+   - Cancellation is ONLY permitted prior to physical service execution: `PENDING → CANCELLED`, `CONFIRMED → CANCELLED`, or `ASSIGNED → CANCELLED`.
+   - Once a technician is en route / arrived / started (`IN_PROGRESS`), the booking CANNOT be directly cancelled.
+   - **`COMPLETED → CANCELLED` IS STRICTLY FORBIDDEN.**
+2. **Post-Completion Adjustments & Reversals:**
+   - Completed work that must be financially reversed (e.g. customer dissatisfaction, service dispute) is handled via a **Billing Adjustment / Credit Note and Refund Workflow** (`payments.status → PARTIALLY_REFUNDED | REFUNDED`, `invoices.status → ADJUSTED | CREDIT_NOTE`), NEVER by altering the historical booking status to `CANCELLED`.
+3. **Rescheduling as an Operational Mutation:**
+   - Rescheduling is NOT a terminal lifecycle state. When a customer or dispatcher reschedules an appointment, the system executes an atomic slot release and re-reservation on `availability_slots`, updates the target date/time on the active `WorkOrder` / `ServiceVisit`, and maintains the booking in `CONFIRMED` or `ASSIGNED`.
+4. **Visit Exceptions do NOT Cancel the Booking:**
+   - If a technician arrives and the customer is absent (`ServiceVisitStatus = FAILED`), the `Booking` remains `IN_PROGRESS`. Dispatch schedules a follow-up `ServiceVisit` under the existing `WorkOrder`.
+
+### 2.3 Formal State Aggregation Logic & Matrix
 
 | Booking Status | Exact Preconditions & Deterministic Aggregation Rule | Permitted Triggers / Actions |
 |:---|:---|:---|
-| **`PENDING`** | Booking created by customer/admin. Slot lock or payment authorization is pending. | Cart checkout initiated; Redis slot pre-lock active. |
-| **`CONFIRMED`** | Slot capacity reserved in PostgreSQL (`booked_count++`). For Prepaid: `payment_status` is `AUTHORIZED` or `PAID`. For COD: `payment_status = 'PENDING'` is valid. Initial Work Order generated in `ASSIGNED` status. | System/Webhook confirms slot & payment mode; emits `BookingConfirmed`. |
-| **`IN_PROGRESS`** | At least one child Work Order is `ACCEPTED`, `ON_THE_WAY`, `ARRIVED`, `STARTED`, or has a Service Visit in progress. OR: An initial Work Order/Visit is `COMPLETED`, but secondary scheduled Work Orders (e.g. warranty visit, subsequent AMC visit) remain open/scheduled. | Field tech accepts/starts visit; updates booking to reflect active operations. |
-| **`COMPLETED`** | **ALL** operational child Work Orders associated with the booking have reached terminal `COMPLETED` (or `CANCELLED` if non-essential), all child Service Visits are terminal (`COMPLETED` / `CANCELLED`), and NO open/active operational work orders remain. | System detects last open Work Order transition to `COMPLETED`; emits `BookingCompleted`. |
-| **`CLOSED`** | Booking operational status is `COMPLETED` **AND** financial settlement is fully resolved (`payment_status = 'PAID'` or COD cash handover verified) **AND** final sequential PDF invoice is generated and linked. | Accountant reconciles or system completes invoice upload; emits `BookingClosed`. |
-| **`CANCELLED`** | Booking cancelled prior to operational completion. Slot capacity is released (`booked_count--`). Child Work Orders and Visits are marked `CANCELLED`. If prepaid, gateway refund is initiated (`REFUNDED`). | Customer or Admin cancellation before service execution starts. |
+| **`PENDING`** | Booking created by customer/admin. Slot lock or payment authorization is pending. | Cart checkout initiated; Redis slot pre-lock active. Permitted: `→ CONFIRMED`, `→ CANCELLED`. |
+| **`CONFIRMED`** | Slot capacity reserved in PostgreSQL (`booked_count++`). For Prepaid: `payment_status` is `AUTHORIZED` or `PAID`. For COD: `payment_status = 'PENDING'` is valid. Initial Work Order generated. | System/Webhook confirms slot & payment mode; emits `BookingConfirmed`. Permitted: `→ ASSIGNED`, `→ CANCELLED`. |
+| **`ASSIGNED`** | Dispatcher or auto-dispatch has assigned a qualified technician. Work order is in `ASSIGNED` or `ACCEPTED` status. | Dispatch assignment complete; emits `TechnicianAssigned`. Permitted: `→ IN_PROGRESS`, `→ CANCELLED`. |
+| **`IN_PROGRESS`** | Technician is en route, arrived, or actively performing treatment (`ON_THE_WAY`, `ARRIVED`, `STARTED`). OR: Initial visit complete while subsequent warranty/AMC visits remain open. | Field tech starts travel/treatment; updates booking to active. Permitted: `→ COMPLETED`. |
+| **`COMPLETED`** | **ALL** operational child Work Orders associated with the booking have reached terminal `COMPLETED` (or non-essential sub-orders `CANCELLED`), all child Service Visits are terminal (`COMPLETED` / `CANCELLED`), and NO open operational work remains. | System detects last open Work Order transition to `COMPLETED`; emits `BookingCompleted`. Permitted: `→ CLOSED`. |
+| **`CLOSED`** | Booking operational status is `COMPLETED` **AND** financial settlement is fully resolved (`payment_status = 'PAID'` or COD cash handover verified) **AND** final sequential PDF invoice is generated and linked. | Accountant reconciles or system completes invoice upload; emits `BookingClosed`. Terminal state. |
+| **`CANCELLED`** | Booking cancelled prior to physical execution start. Slot capacity is released (`booked_count--`). Child Work Orders and Visits are marked `CANCELLED`. If prepaid, gateway refund is initiated (`REFUNDED`). | Customer or Admin cancellation before service travel/execution starts. Terminal state. |
 
 ---
 

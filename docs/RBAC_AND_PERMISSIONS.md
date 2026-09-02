@@ -1,9 +1,9 @@
 # RBAC & Permissions Reference
-Implementation Status: Documentation / Architecture Baseline
-— Backend: Not implemented
-— Customer Android: Not implemented
-— Technician Android: Not implemented
-— Admin Web: Not implemented
+**Architecture Baseline:** 2026.09 (V2.1.0)  
+**Document Version:** 2.1.0  
+**Implementation Status:** Documentation & Specification Baseline  
+— Backend: Java 21 + Spring Boot 3.3.x Modular Monolith  
+— System of Record: PostgreSQL 16  
 
 This document is the single authoritative source for all roles, permissions, and tenant-scoping rules.
 
@@ -14,7 +14,7 @@ This document is the single authoritative source for all roles, permissions, and
 - **ACCOUNTANT**: Financial read/write (payments, invoices, expenses, reports). Cannot dispatch or manage services.
 - **DISPATCHER**: Booking management, technician assignment, work orders, scheduling. Cannot access financial data.
 - **AGENCY_MANAGER**: Branch-scoped access to their own agency's technicians, inventory, expenses, reports, and bookings.
-- **TECHNICIAN**: Own job queue only. Read access to service catalog. Cannot access other technicians' data or financials.
+- **TECHNICIAN**: Own job queue and historical completed visits. Read access to service catalog. Cannot access other technicians' data or financials.
 - **CUSTOMER**: Own bookings, payments, invoices, profile, and AMC contracts. Read access to service catalog/pricing.
 
 ## 2. Permissions Matrix
@@ -27,7 +27,7 @@ This document is the single authoritative source for all roles, permissions, and
 | **Employees** | All | Read | All | Branch Scoped | Own Profile | None |
 | **Bookings** | All | Read | All | Branch Scoped | Read (job scope) | Own Bookings |
 | **Work Orders** | All | Read | All | Branch Scoped | Own Assigned | None |
-| **Service Visits**| All | Read | All | Branch Scoped | Own Assigned | None |
+| **Service Visits**| All | Read | All | Branch Scoped | Own (Active + Historical) | None |
 | **Payments** | All | All | None | Read (Branch) | None | Own (Read) |
 | **Invoices** | All | All | None | Read (Branch) | None | Own (Read) |
 | **Inventory** | All | Read | None | Branch Stock | Own Trunk | None |
@@ -41,9 +41,11 @@ This document is the single authoritative source for all roles, permissions, and
 ## 3. Tenant & Agency Scope Rules
 
 - **AGENCY_MANAGER**: Can only access resources where `agency_id = [their_agency_id]`.
-- **TECHNICIAN**: Can only access `work_orders`/`service_visits` where `primary_employee_id = [their_employee_id]`.
+- **TECHNICIAN**: 
+  - Active Work Orders: Can access `work_orders` where `assigned_employee_id = [their_employee_id]`.
+  - Service Visits: Can access both active and historically completed `service_visits` where `primary_employee_id = [their_employee_id]`. Reassignment of a work order does not remove a technician's legitimate audit visibility into visits they personally performed.
 - **CUSTOMER**: Can only access resources where `customer_id = [their_customer_id]`.
-- **DISPATCHER**: In a multi-agency configuration, restricted to assigning technicians and viewing bookings within their specific agency (or globally if using a single-company configuration). *Configuration choice applies globally via application properties.*
+- **DISPATCHER**: In a multi-agency configuration, restricted to assigning technicians and viewing bookings within their specific agency (or globally if using a single-company configuration).
 - **ADMIN / SUPER_ADMIN**: Cross-agency access permitted.
 
 ## 4. Object-Level Authorization Rules
@@ -61,8 +63,16 @@ public BookingResponse getBooking(@PathVariable UUID bookingId) {
 }
 ```
 
-## 5. User Deactivation Flow
+## 5. File Storage Access Control Policies
+
+The `file_metadata.access_policy` column governs presigned URL download authorizations:
+- **`PRIVATE`**: Presigned download URLs are granted ONLY to the creating user, assigned technician, or system administrator. Used for customer signatures, identity verification documents, and technician personal documents.
+- **`AGENCY`**: Presigned download URLs are granted to any authenticated employee belonging to the matching `agency_id`. Used for job before/after treatment photos, chemical batch certificates, and branch expense receipts.
+- **`PUBLIC`**: Publicly accessible via CDN or unauthenticated presigned URLs. Used for service catalog promotional images and public marketing assets.
+
+## 6. User Deactivation Flow
 
 Token validity at the identity provider (Firebase) is secondary to the system database. 
 - If a user is deactivated (`is_active = false` in PostgreSQL), the backend `FirebaseAuthenticationFilter` or custom `UserDetailsService` MUST reject ALL requests with HTTP 401/403.
 - This ensures immediate revocation without waiting for the 1-hour Firebase JWT expiration.
+

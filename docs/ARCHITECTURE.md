@@ -6,7 +6,16 @@
 — Technician Mobile: Android Native (Java 21, Offline-First)  
 — Admin Web: React 18 + TypeScript (Vite + Ant Design)  
 
-This is the PRIMARY architectural reference for the Pest Control ERP system. All other architectural documents defer to this one.
+---
+
+## 0. Architecture Authority & ADR Precedence Rule
+
+The repository governance adheres to a strict hierarchy of authority:
+1. **Accepted ADRs ([`docs/adr/`](adr/)):** Define binding architectural decisions and rationale.
+2. **Canonical Architecture & Design Specifications ([`docs/`](./)):** Implement the decisions in the ADRs.
+3. **Precedence Invariant:** If any ambiguity or contradiction arises between historical documentation and an accepted ADR, **the accepted ADR is the binding authority**.
+
+---
 
 ## 1. System Context
 

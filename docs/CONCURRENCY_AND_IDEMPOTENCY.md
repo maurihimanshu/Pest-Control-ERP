@@ -16,16 +16,16 @@
 ### 1.1 Conceptual Clarity: Agency Capacity Pool vs. Named Technician Slot
 To support both self-service customer checkout and multi-technician dispatching without race conditions or premature resource locking:
 
-1. **Availability Scope:**
-   - **Agency Capacity Pool (`employee_id IS NULL`):** Default reservation unit for self-service customer checkout. Represents the aggregated concurrent appointment capacity of a branch/agency territory for a specific service category (`service_category_id`), date, and time window (e.g. `10:00–12:00`, `capacity = 5`).
-   - **Named Technician Slot (`employee_id IS NOT NULL`):** Represents an individual technician's assigned calendar schedule (`capacity = 1`). Used when a customer or dispatcher explicitly requests a specific technician.
+1. **Availability Scope & Explicit Business Keys:**
+   - **Agency Capacity Pool (`employee_id IS NULL`):** Default reservation unit for self-service customer checkout. Identified by the business key `(agency_id, service_category_id, service_date, start_time)`. Represents the aggregated concurrent appointment capacity of a branch/agency territory for a specific service category, date, and time window (e.g. `10:00–12:00`, `capacity = 5`).
+   - **Named Technician Slot (`employee_id IS NOT NULL`):** Represents an individual technician's assigned calendar schedule (`capacity = 1`). Identified by the business key `(employee_id, service_date, start_time)`. Used when a customer or dispatcher explicitly requests a specific technician.
 2. **Capacity Owner:** The Agency/Branch (`agency_id`) owning the postal code/territory manages the slot capacity pool.
 3. **Reservation Unit:** Exactly 1 capacity unit is reserved per customer booking item during checkout (`booked_count = booked_count + 1`).
 4. **Assignment Timing (Decoupled from Reservation):**
    - At booking confirmation: 1 capacity unit is deducted from the Agency Capacity Pool. The booking is `CONFIRMED`.
    - During dispatch window: The Dispatcher or Auto-Dispatch algorithm creates/assigns an operational `WorkOrder` and `ServiceVisit` to a specific, certified `Employee`. This decouples commercial booking confirmation from physical technician assignment.
 
-### 1.2 Schema Definition & Partial Unique Indexes
+### 1.2 Schema Definition & Database-Enforced Invariants
 ```sql
 CREATE TABLE availability_slots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -35,11 +35,13 @@ CREATE TABLE availability_slots (
     service_date DATE NOT NULL,
     start_time TIME NOT NULL,
     end_time TIME NOT NULL,
-    capacity INTEGER NOT NULL DEFAULT 1 CHECK (capacity >= 1),
-    booked_count INTEGER NOT NULL DEFAULT 0 CHECK (booked_count >= 0),
+    capacity INTEGER NOT NULL DEFAULT 1,
+    booked_count INTEGER NOT NULL DEFAULT 0,
     is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_slot_capacity_positive CHECK (capacity > 0),
+    CONSTRAINT chk_slot_booked_nonneg CHECK (booked_count >= 0),
     CONSTRAINT chk_slot_capacity CHECK (booked_count <= capacity)
 );
 
@@ -95,13 +97,31 @@ POST /api/v1/bookings/confirm
 
 ---
 
-## 2. Inventory Concurrency & Transactional Deduction
+## 2. Inventory Concurrency, Transaction Orchestration & Offline Expiry
 
-### 2.1 Core Architectural Rule
+### 2.1 Core Architectural Rule & Cross-Module Contract
 **Authoritative inventory deduction MUST execute strictly inside the SAME PostgreSQL transaction as service visit completion.**  
 RabbitMQ is NEVER used to execute inventory deductions. RabbitMQ domain events (`ServiceVisitCompleted`, `LowStockAlert`) are dispatched AFTER commit exclusively for downstream asynchronous reactions (manager notifications, auto-replenishment purchase requests, analytics).
 
-### 2.2 Material Deduction Flow (Row-Level Locking & Expiry Validation)
+**Transaction Boundary Orchestration:**  
+The `dispatch` module orchestrates the visit completion transaction by calling exported public service methods from the `inventory` module:
+```java
+// Inside com.pestcontrol.modules.dispatch.service.ServiceVisitCompletionService
+@Transactional
+public void completeVisit(UUID visitId, CompleteVisitRequest request) {
+    // 1. Lock and update visit
+    ServiceVisit visit = visitRepository.findByIdForUpdate(visitId);
+    
+    // 2. Invoke Inventory public API to deduct batch stock & record usage
+    inventoryStockService.deductMaterialUsage(visitId, request.getMaterialsUsed());
+    
+    // 3. Mark visit completed and write outbox event
+    visit.setStatus(ServiceVisitStatus.COMPLETED);
+    outboxEventRepository.save(new OutboxEvent("ServiceVisitCompleted", "ServiceVisit", visitId, ...));
+}
+```
+
+### 2.2 Material Deduction Flow & Offline Expiry Conflict Policy
 ```text
 POST /api/v1/dispatch/visits/{visitId}/complete
   BEGIN TRANSACTION
@@ -118,17 +138,15 @@ POST /api/v1/dispatch/visits/{visitId}/complete
       WHERE id = :material.batchId 
       FOR UPDATE;
 
+      -- OFFLINE SYNC CONFLICT POLICY:
+      -- If physical chemicals were used offline but the batch expired or stock depleted before sync:
       IF expiry_date < CURRENT_DATE THEN
-        ROLLBACK;
-        THROW ExpiredChemicalException("Batch " || batch_number || " has expired");
+        -- Record usage to preserve physical evidence, but flag conflict for branch manager
+        INSERT INTO sync_conflicts(id, device_id, operation_id, agency_id, entity_type, entity_id, conflict_type, ...)
+        VALUES (gen_random_uuid(), :deviceId, :opId, :agencyId, 'SERVICE_VISIT', :visitId, 'EXPIRED_BATCH_USED', ...);
       END IF;
 
-      IF current_quantity_available < :material.quantityUsed THEN
-        ROLLBACK;
-        THROW InsufficientInventoryException("Insufficient stock in batch " || batch_number);
-      END IF;
-
-      -- Deduct stock
+      -- Deduct stock (or allow negative adjustment flagged with conflict if offline forced)
       UPDATE chemical_batches 
       SET current_quantity_available = current_quantity_available - :material.quantityUsed
       WHERE id = :material.batchId;
@@ -137,7 +155,7 @@ POST /api/v1/dispatch/visits/{visitId}/complete
       INSERT INTO inventory_transactions(id, batch_id, transaction_type, quantity_change, reference_visit_id, created_at)
       VALUES (gen_random_uuid(), :material.batchId, 'SERVICE_DEDUCTION', -:material.quantityUsed, :visitId, NOW());
 
-      -- Insert visit material usage record
+      -- Insert visit material usage record (owned by inventory aggregate)
       INSERT INTO service_material_usage(id, service_visit_id, chemical_batch_id, quantity_used, dosage_rate, target_pest)
       VALUES (gen_random_uuid(), :visitId, :material.batchId, :material.quantityUsed, :material.dosageRate, :material.targetPest);
     END FOR;
@@ -149,28 +167,23 @@ POST /api/v1/dispatch/visits/{visitId}/complete
         updated_at = NOW()
     WHERE id = :visitId;
 
-    -- 4. Check Work Order and Booking derived completion state
-
-    -- 5. Insert transactional outbox event
+    -- 4. Insert transactional outbox event
     INSERT INTO outbox_events(id, event_type, aggregate_type, aggregate_id, payload, publication_status)
     VALUES (gen_random_uuid(), 'ServiceVisitCompleted', 'ServiceVisit', :visitId, :serviceCompletedJson, 'PENDING');
   COMMIT;
 ```
 
-### 2.4 Cancellation & Reversals
-If a visit is formally invalidated or cancelled after completion:
-- The system NEVER deletes ledger records or rolls back historical transactions.
-- A compensating transaction executes: inserts `inventory_transactions` with `transaction_type = 'CANCELLATION_REVERSAL'`, updates `chemical_batches.current_quantity_available`, and writes an `audit_logs` record.
-
 ---
 
-## 3. Payment Webhook Idempotency & Lifecycle
+## 3. Payment Webhook Idempotency, Triaging & Retry Lifecycle
 
 ### 3.1 Webhook Deduplication Key: `(provider, gateway_event_id)`
 Payment gateways (Razorpay, Stripe) deliver multiple webhook events per payment (`payment.authorized`, `payment.captured`, `payment.failed`, `refund.created`).  
 **The sole mechanism for event deduplication is the unique constraint `(provider, gateway_event_id)` on the `payment_events` table.**  
 
-### 3.2 Authoritative Webhook Processing Pipeline
+### 3.2 Authoritative Webhook Triaging Pipeline
+The server explicitly triages incoming webhook events into three distinct processing states:
+
 ```text
 POST /api/v1/payments/webhooks/{provider}
   1. Cryptographic HMAC Signature Verification:
@@ -178,13 +191,28 @@ POST /api/v1/payments/webhooks/{provider}
      - Stripe: Verify Stripe-Signature using Webhook.constructEvent().
      - If invalid signature -> Return HTTP 400 Bad Request immediately.
 
-  2. Atomic Event Registration:
-     INSERT INTO payment_events (id, provider, gateway_event_id, gateway_payment_id, event_type, payload_hash, raw_payload, processing_status)
-     VALUES (gen_random_uuid(), :provider, :eventId, :paymentId, :eventType, :hash, :payloadJson, 'PENDING')
-     ON CONFLICT (provider, gateway_event_id) DO NOTHING;
+  2. Atomic Event Registration & Triaging:
+     SELECT * FROM payment_events 
+     WHERE provider = :provider AND gateway_event_id = :eventId 
+     FOR UPDATE;
 
-     IF rows_affected == 0 THEN
-       RETURN HTTP 200 OK; -- Idempotent acknowledgement to gateway
+     IF EXISTS THEN
+       -- Case A: Already successfully processed -> Idempotent success response
+       IF processing_status = 'PROCESSED' THEN
+         RETURN HTTP 200 OK;
+       END IF;
+
+       -- Case B: Currently being processed by another worker thread -> Suppress duplicate
+       IF processing_status = 'PROCESSING' THEN
+         RETURN HTTP 200 OK; -- Gateway will retry if current processing fails
+       END IF;
+
+       -- Case C: Previously FAILED -> Allow controlled re-execution upon redelivery
+       UPDATE payment_events SET processing_status = 'PROCESSING', updated_at = NOW();
+     ELSE
+       -- Case D: New event -> Insert in PROCESSING state
+       INSERT INTO payment_events (id, provider, gateway_event_id, gateway_payment_id, event_type, payload_hash, raw_payload, processing_status)
+       VALUES (gen_random_uuid(), :provider, :eventId, :paymentId, :eventType, :hash, :payloadJson, 'PROCESSING');
      END IF;
 
   3. Business Transaction Execution:
@@ -206,27 +234,35 @@ POST /api/v1/payments/webhooks/{provider}
            processed_at = NOW()
        WHERE provider = :provider AND gateway_event_id = :eventId;
 
-       -- Record audit entry
-       INSERT INTO audit_logs(...);
-
        -- Persist domain outbox event
        INSERT INTO outbox_events(id, event_type, aggregate_type, aggregate_id, payload, publication_status)
        VALUES (gen_random_uuid(), 'PaymentCompleted', 'Payment', :internalPaymentId, :paymentEventJson, 'PENDING');
      COMMIT;
 
-  4. Return HTTP 200 OK to gateway.
+  4. Error Handling:
+     ON EXCEPTION:
+       UPDATE payment_events 
+       SET processing_status = 'FAILED', 
+           error_message = :exceptionMessage,
+           updated_at = NOW()
+       WHERE provider = :provider AND gateway_event_id = :eventId;
+       RETURN HTTP 500 Internal Server Error; -- Triggers gateway backoff retry
+
+  5. Return HTTP 200 OK to gateway.
 ```
 
 ---
 
-## 4. Transactional Outbox Pattern & RabbitMQ Delivery Guarantees
+## 4. Transactional Outbox Pattern & Canonical Event Identity
 
-### 4.1 Canonical Outbox Contract
+### 4.1 Canonical Outbox Contract & Event Identity
+- **Sole Deduplication Identity:** The canonical identifier of every domain event is `outbox_events.id` (UUID v4), populated at insert time. Downstream consumers deduplicate exclusively on `event.id`. No volatile timestamps are used for identity.
+- **Relay Delivery:**
 ```text
    Domain @Transactional Method (e.g., Booking, Dispatch, Payment)
         │
         ├── 1. Mutate domain entity (PostgreSQL)
-        ├── 2. Insert outbox_events row (Same PostgreSQL Transaction)
+        ├── 2. Insert outbox_events row with unique UUID (Same Transaction)
         └── 3. COMMIT Database Transaction
                      │
                      ▼ (PostgreSQL durability guaranteed)
@@ -237,6 +273,7 @@ POST /api/v1/payments/webhooks/{provider}
         ├── 5. Publish domain event to RabbitMQ Exchange
         ├── 6. On broker ACK -> UPDATE outbox_events SET publication_status = 'PUBLISHED', published_at = NOW();
         └── 7. On broker NACK/Error -> UPDATE outbox_events SET retry_count++, last_error = ...;
+```
 ### 4.2 Non-Negotiable Publication Rules
 1. **NO direct RabbitMQ publishing from business transactions.** Direct calls to `RabbitTemplate.convertAndSend()` inside `@Transactional` methods are strictly forbidden.
 2. **NO unreliable event listeners.** Spring `@TransactionalEventListener(phase = AFTER_COMMIT)` without outbox persistence is forbidden because broker downtime causes silent event loss.
