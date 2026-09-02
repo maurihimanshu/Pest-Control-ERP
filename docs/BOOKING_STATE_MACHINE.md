@@ -1,7 +1,8 @@
 # State Machine Specification
 ## Booking Aggregate Lifecycle, Work Order, Field Visit & Payment State Machines
 
-**Document Version:** 2.0.0  
+**Architecture Baseline:** 2026.09 (V2.1.0)  
+**Document Version:** 2.1.0  
 **Enforcement Layer:** Spring Boot Domain Services & PostgreSQL Enums/Constraints  
 **Reference:** [`docs/DOMAIN_MODEL.md`](DOMAIN_MODEL.md), [`docs/CONCURRENCY_AND_IDEMPOTENCY.md`](CONCURRENCY_AND_IDEMPOTENCY.md)  
 **Date:** September 2026  
@@ -17,12 +18,14 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 │             Booking Status             │     │           Work Order Status            │
 │       (Commercial Aggregate State)     │     │         (Operational Dispatch)         │
 ├────────────────────────────────────────┤     ├────────────────────────────────────────┤
-│ • PENDING                              │     │ • UNASSIGNED                           │
-│ • CONFIRMED                            │     │ • ASSIGNED                             │
-│ • IN_PROGRESS                          │     │ • IN_PROGRESS                          │
-│ • COMPLETED                            │     │ • COMPLETED                            │
-│ • CLOSED                               │     │ • CANCELLED                            │
-│ • CANCELLED                            │     │                                        │
+│ • PENDING                              │     │ • ASSIGNED                             │
+│ • CONFIRMED                            │     │ • ACCEPTED                             │
+│ • IN_PROGRESS                          │     │ • REJECTED                             │
+│ • COMPLETED                            │     │ • ON_THE_WAY                           │
+│ • CLOSED                               │     │ • ARRIVED                              │
+│ • CANCELLED                            │     │ • STARTED                              │
+│                                        │     │ • COMPLETED                            │
+│                                        │     │ • CANCELLED                            │
 └────────────────────────────────────────┘     └────────────────────────────────────────┘
 
 ┌────────────────────────────────────────┐     ┌────────────────────────────────────────┐
@@ -84,9 +87,9 @@ A `Booking` is the top-level commercial agreement. Its status is not a simple ma
 
 | Booking Status | Exact Preconditions & Deterministic Aggregation Rule | Permitted Triggers / Actions |
 |:---|:---|:---|
-| **`PENDING`** | Booking created by customer/admin. Slot lock or payment authorization is pending. | Cart checkout initiated; Redis slot lock active. |
-| **`CONFIRMED`** | Slot capacity reserved in PostgreSQL (`booked_count++`). For Prepaid: `payment_status` is `AUTHORIZED` or `PAID`. For COD: `payment_status = 'PENDING'` is valid. Initial Work Order generated in `UNASSIGNED` status. | System/Webhook confirms slot & payment mode; emits `BookingConfirmed`. |
-| **`IN_PROGRESS`** | At least one child Work Order is `ASSIGNED`, `IN_PROGRESS`, or has a Service Visit in `ON_THE_WAY`, `ARRIVED`, or `STARTED`. OR: An initial Work Order/Visit is `COMPLETED`, but secondary scheduled Work Orders (e.g. warranty visit, subsequent AMC visit) remain open/scheduled. | Field tech starts visit or dispatcher assigns job; updates booking to reflect active operations. |
+| **`PENDING`** | Booking created by customer/admin. Slot lock or payment authorization is pending. | Cart checkout initiated; Redis slot pre-lock active. |
+| **`CONFIRMED`** | Slot capacity reserved in PostgreSQL (`booked_count++`). For Prepaid: `payment_status` is `AUTHORIZED` or `PAID`. For COD: `payment_status = 'PENDING'` is valid. Initial Work Order generated in `ASSIGNED` status. | System/Webhook confirms slot & payment mode; emits `BookingConfirmed`. |
+| **`IN_PROGRESS`** | At least one child Work Order is `ACCEPTED`, `ON_THE_WAY`, `ARRIVED`, `STARTED`, or has a Service Visit in progress. OR: An initial Work Order/Visit is `COMPLETED`, but secondary scheduled Work Orders (e.g. warranty visit, subsequent AMC visit) remain open/scheduled. | Field tech accepts/starts visit; updates booking to reflect active operations. |
 | **`COMPLETED`** | **ALL** operational child Work Orders associated with the booking have reached terminal `COMPLETED` (or `CANCELLED` if non-essential), all child Service Visits are terminal (`COMPLETED` / `CANCELLED`), and NO open/active operational work orders remain. | System detects last open Work Order transition to `COMPLETED`; emits `BookingCompleted`. |
 | **`CLOSED`** | Booking operational status is `COMPLETED` **AND** financial settlement is fully resolved (`payment_status = 'PAID'` or COD cash handover verified) **AND** final sequential PDF invoice is generated and linked. | Accountant reconciles or system completes invoice upload; emits `BookingClosed`. |
 | **`CANCELLED`** | Booking cancelled prior to operational completion. Slot capacity is released (`booked_count--`). Child Work Orders and Visits are marked `CANCELLED`. If prepaid, gateway refund is initiated (`REFUNDED`). | Customer or Admin cancellation before service execution starts. |
@@ -99,19 +102,29 @@ Owned by the `dispatch` module. Represents the administrative dispatch grouping 
 
 ```text
           ┌─────────────┐
-          │ UNASSIGNED  │
-          └──────┬──────┘
-                 │ (Dispatcher / Auto-Dispatch assigns technician)
-                 ▼
-          ┌─────────────┐
           │  ASSIGNED   │
           └──────┬──────┘
                  ├─────────────────────────────────────────┐
-                 │ (Technician Accepts / En Route)         │ (Technician Rejects within SLA)
+                 │ (Technician Accepts)                    │ (Technician Rejects within SLA)
                  ▼                                         ▼
           ┌─────────────┐                           ┌─────────────┐
-          │ IN_PROGRESS │                           │ UNASSIGNED  │ (Returns to dispatch pool)
+          │  ACCEPTED   │                           │  REJECTED   │ (Returns to dispatch board)
           └──────┬──────┘                           └─────────────┘
+                 │ (En Route to site)
+                 ▼
+          ┌─────────────┐
+          │ ON_THE_WAY  │
+          └──────┬──────┘
+                 │ (Arrived at customer location)
+                 ▼
+          ┌─────────────┐
+          │   ARRIVED   │
+          └──────┬──────┘
+                 │ (Begins treatment)
+                 ▼
+          ┌─────────────┐
+          │   STARTED   │
+          └──────┬──────┘
                  │ (All assigned Service Visits COMPLETED)
                  ▼
           ┌─────────────┐
@@ -131,7 +144,7 @@ Owned by the `dispatch` module. Represents the physical field execution event on
 | `SCHEDULED` | `ON_THE_WAY` | Field Technician | `POST .../visits/{id}/on-the-way` | Tech en route; emits push notification to customer. |
 | `ON_THE_WAY` | `ARRIVED` | Field Technician | `POST .../visits/{id}/arrived` | Captures GPS coordinates & arrival timestamp. |
 | `ARRIVED` | `STARTED` | Field Technician | `POST .../visits/{id}/start` | Captures pre-treatment photos & begins treatment. |
-| `STARTED` | `COMPLETED` | Field Technician | `POST .../visits/{id}/complete` | **Transactional:** Deducts chemical batch stock, writes material usage, captures post-photos & signature, writes `outbox_events(ServiceCompleted)`. |
+| `STARTED` | `COMPLETED` | Field Technician | `POST .../visits/{id}/complete` | **Transactional:** Deducts chemical batch stock, writes material usage, captures post-photos & signature, writes `outbox_events(ServiceVisitCompleted)`. |
 | `STARTED` | `FAILED` | Field Technician / Admin | `POST .../visits/{id}/fail` | Service aborted (access denied, customer absent). Generates a NEW child `ServiceVisit` on the SAME Work Order for follow-up. |
 | `SCHEDULED` | `CANCELLED` | Dispatcher / Admin | `POST .../visits/{id}/cancel` | Visit cancelled before travel starts. |
 
@@ -151,18 +164,37 @@ Managed exclusively by the backend in the `payments` module:
                   ┌─────────────┐                           ┌─────────────┐
                   │ AUTHORIZED  │                           │   FAILED    │
                   └──────┬──────┘                           └─────────────┘
-                         │ (Capture Succeeded / Instant Capture)
-                         ▼
-                  ┌─────────────┐
-                  │    PAID     │
-                  └──────┬──────┘
                          ├────────────────────────┐
-                         │ (Partial Refund)       │ (Full Refund)
+                         │ (Capture Succeeded)    │ (Partial Payment / Split)
                          ▼                        ▼
-               ┌──────────────────┐      ┌─────────────────┐
-               │PARTIALLY_REFUNDED│      │    REFUNDED     │
-               └──────────────────┘      └─────────────────┘
+                  ┌─────────────┐          ┌─────────────┐
+                  │    PAID     │          │   PARTIAL   │
+                  └──────┬──────┘          └──────┬──────┘
+                         ├────────────────────────┤ (Remainder Paid)
+                         │ (Partial Refund)       │
+                         ▼                        │
+               ┌──────────────────┐               │
+               │PARTIALLY_REFUNDED│               │
+               └─────────┬────────┘               │
+                         │ (Full Refund Balance)  │
+                         ▼                        │
+               ┌──────────────────┐               │
+               │     REFUNDED     │◄──────────────┘
+               └──────────────────┘
 ```
+
+### 5.1 Payment State Transition Matrix
+
+| From Status | Allowed Target Statuses | Trigger / Event | Invalid / Forbidden Transitions |
+|:---|:---|:---|:---|
+| **`PENDING`** | `AUTHORIZED`, `PAID`, `PARTIAL`, `FAILED` | Gateway authorization, instant capture, or gateway decline | `REFUNDED`, `PARTIALLY_REFUNDED` |
+| **`AUTHORIZED`** | `PAID`, `FAILED`, `CANCELLED` | Capture confirmation or auth expiration | `REFUNDED`, `PENDING` |
+| **`PARTIAL`** | `PAID`, `FAILED`, `PARTIALLY_REFUNDED` | Subsequent installment payment or partial dispute | `AUTHORIZED`, `PENDING` |
+| **`PAID`** | `PARTIALLY_REFUNDED`, `REFUNDED` | Customer refund or service dispute | `PENDING`, `AUTHORIZED`, `FAILED`, `PARTIAL` |
+| **`PARTIALLY_REFUNDED`** | `REFUNDED` | Remaining balance refunded | `PAID`, `PENDING`, `AUTHORIZED`, `FAILED` |
+| **`FAILED`** | `PENDING` (Retry checkout only) | Customer reinitiates checkout with new payment attempt | `PAID`, `REFUNDED`, `AUTHORIZED` |
+| **`REFUNDED`** | *(Terminal)* | None | Any transition (Terminal State) |
+
 
 ---
 

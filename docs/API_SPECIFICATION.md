@@ -36,7 +36,7 @@
     - `POST /api/v1/invoices`
   - **OPTIONAL:** `PUT` / `PATCH` endpoints that are naturally idempotent.
   - **FORBIDDEN / IGNORED:** `GET`, `HEAD`, `DELETE` where HTTP semantics already define safe/idempotent execution.
-  - Duplicate requests matching `(tenant_id, user_id, request_path, request_hash)` within 24 hours return the exact cached response body without re-execution.
+  - Duplicate requests matching `(agency_id, user_id, request_path, request_hash)` within 24 hours return the exact cached response body without re-execution.
 
 ---
 

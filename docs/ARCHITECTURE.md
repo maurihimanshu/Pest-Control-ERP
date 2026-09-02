@@ -1,9 +1,10 @@
 # Architecture Reference
-Implementation Status: Documentation / Architecture Baseline
-— Backend: Not implemented
-— Customer Android: Not implemented
-— Technician Android: Not implemented
-— Admin Web: Not implemented
+**Architecture Baseline:** 2026.09 (V2.1.0)  
+**Implementation Status:** Documentation & Specification Baseline  
+— Backend: Java 21 + Spring Boot 3.3.x Modular Monolith  
+— Customer Mobile: Android Native (Java 21)  
+— Technician Mobile: Android Native (Java 21, Offline-First)  
+— Admin Web: React 18 + TypeScript (Vite + Ant Design)  
 
 This is the PRIMARY architectural reference for the Pest Control ERP system. All other architectural documents defer to this one.
 
@@ -34,7 +35,7 @@ The system consists of three client applications communicating with a central Sp
      |                      |                   |                   |
      v                      v                   v                   v
 +---------+           +------------+      +------------+      +-----------+
-| Redis   |           | PostgreSQL |      | RabbitMQ   |      | S3/GCS    |
+| Redis   |           | PostgreSQL |      | RabbitMQ   |      | S3/MinIO  |
 | (Cache/ |           | (System of |      | (Async     |      | (Files &  |
 |  Locks) |           |  Record)   |      |  Events)   |      |  Photos)  |
 +---------+           +------------+      +------------+      +-----------+
@@ -46,39 +47,34 @@ The backend is built as a single deployable Spring Boot Modular Monolith.
 **Layer Structure**: Controller → Service → Repository → Entity.
 **Rule**: No cross-module `@Repository` or `@Entity` injection. Modules interact exclusively via public Service interfaces (`com.pestcontrol.modules.<module>.api.*`) or asynchronous Domain Events via `outbox_events` and RabbitMQ.
 
-The canonical definition of all 18 modules is maintained in [`docs/MODULE_CATALOG.md`](MODULE_CATALOG.md):
-1. **`auth`**: Firebase ID token validation, stateless Spring Security filter chain.
-2. **`users`**: User accounts, status, and role mappings.
-3. **`customers`**: Customer profiles, property addresses, and contact preferences.
-4. **`employees`**: Field technician profiles, certifications, skills matrix, shifts.
-5. **`agencies`**: Multi-tenant branch/agency management, service territories, commissions.
-6. **`catalog`**: Service catalog, categories, packages, and dynamic pricing engine.
-7. **`bookings`**: Commercial bookings, line items, coupons, and slot capacity pool reservations.
-8. **`dispatch`**: Operational dispatch, owning `work_orders`, `service_visits` (1:N), checklists, and offline sync.
-9. **`payments`**: Payment transactions, gateway webhooks, COD tracking, and sequential PDF invoices.
-10. **`inventory`**: Chemical products, batch FIFO tracking, warehouses, trunk stock, and transactional service consumption.
-11. **`expenses`**: Branch operational expenses, fuel logs, and receipt files.
-12. **`amc`**: Annual Maintenance Contracts and automated recurring visit scheduling.
-13. **`notifications`**: Event-driven multi-channel alert delivery (FCM, SMS, Email, WhatsApp).
-14. **`support`**: Customer complaints, warranty claims, ratings, and ticket escalation.
-15. **`files`**: Presigned URL generation, file metadata, and storage provider abstraction.
-16. **`reporting`**: Read-only analytical queries, KPI aggregations, and tabular report exports.
-17. **`audit`**: Immutable append-only audit trail logging.
-18. **`outbox`**: Transactional outbox persistence, scheduled polling publisher, and RabbitMQ dispatch.
+The canonical single source of truth for all 18 modules, their owned tables, public APIs, and event contracts is maintained in [`docs/MODULE_CATALOG.md`](MODULE_CATALOG.md).
+
+```text
+com.pestcontrol.modules
+├── auth          ├── bookings      ├── notifications
+├── users         ├── dispatch      ├── support
+├── customers     ├── payments      ├── files
+├── employees     ├── inventory     ├── reporting
+├── agencies      ├── expenses      ├── audit
+└── catalog       └── amc           └── outbox
+```
 
 ## 3. Domain Boundaries & Aggregate Ownership
 
 Strict separation of concerns across domain modules:
 - **`bookings`**: Owns `bookings`, `booking_items`, `booking_events`, `coupons`, `coupon_redemptions`, `availability_slots`.
 - **`dispatch`**: Owns `work_orders`, `service_visits` (1:N cardinality — one Work Order supports multiple Service Visits for initial/rescheduled/warranty/AMC visits), `service_checklists`, `offline_sync_logs`.
-- **`payments`**: Owns `payments`, `payment_events`, `payment_transactions`, `invoices`, `invoice_items`.
+- **`payments`**: Owns `payments`, `payment_events`, `payment_transactions`, `invoices`, `invoice_items`. (Invoice generation is a component of the `payments` module in V1).
 - **`inventory`**: Owns `chemical_products`, `chemical_batches`, `inventory_locations`, `inventory_transactions`, `service_material_usage`.
+- **`catalog`**: Owns `service_categories`, `services`, `pricing_tiers`, `pricing_rules`. (Service catalog and pricing engine are subdomains within the `catalog` module).
+- **`employees`**: Owns `employees`, `technician_skills`, `shift_schedules`. (`Employee` is the core identity; technicians are employees with the `TECHNICIAN` role).
 - **`amc`**: Owns `amc_contracts`, `amc_schedules`.
 
 ## 4. Database Authority
 
-**PostgreSQL 16 is THE system of record.**
-- **Cache in Redis**: Catalog items, pricing rules, optimistic slot availability checks.
+**PostgreSQL 16 is THE system of record and the sole authority for business correctness.**
+- **Concurrency & Invariants**: Handled strictly via PostgreSQL ACID transactions with pessimistic row locking (`SELECT FOR UPDATE`).
+- **Cache in Redis**: Catalog items, pricing rules, and optional high-throughput pre-lock coordination. Under no circumstances is business correctness or state integrity delegated to Redis.
 - **NEVER Cache as System of Record**: Payment state, booking status, inventory quantities.
 
 ## 5. Messaging Architecture & Canonical Outbox Rules
@@ -100,12 +96,16 @@ The system uses the Transactional Outbox Pattern to guarantee at-least-once deli
 
 **Canonical Rule:** No domain transaction may publish directly to RabbitMQ. All events MUST be written to `outbox_events` in the same PostgreSQL transaction as the business mutation.
 
-**Key Domain Events**:
+**Canonical Domain Events (PascalCase)**:
+- `BookingCreated` (Source: `bookings` → Consumer: `notifications`)
 - `BookingConfirmed` (Source: `bookings` → Consumer: `dispatch`, `notifications`)
 - `WorkOrderCreated` (Source: `dispatch` → Consumer: `notifications`)
-- `ServiceCompleted` (Source: `dispatch` → Consumer: `payments`, `notifications`, `amc`, `support`)
+- `TechnicianAssigned` (Source: `dispatch` → Consumer: `notifications`)
+- `TechnicianEnRoute` (Source: `dispatch` → Consumer: `notifications`)
+- `ServiceVisitCompleted` (Source: `dispatch` → Consumer: `payments`, `notifications`, `amc`, `support`, `inventory`)
 - `PaymentCompleted` (Source: `payments` → Consumer: `bookings`, `notifications`)
 - `InvoiceGenerated` (Source: `payments` → Consumer: `notifications`)
+- `AMCVisitGenerated` (Source: `amc` → Consumer: `dispatch`, `notifications`)
 
 ## 6. Authentication & Authorization
 
@@ -120,8 +120,8 @@ Firebase Auth handles identity verification.
 
 Multi-agency model support:
 - **Agency-Scoped Entities**: Employees, inventory, expenses, work orders, service visits, support tickets.
-- **Global Entities**: Service catalog, global pricing rules.
-- **Security Rule**: Strict boundary enforcement. No cross-agency resource access is permitted via ID manipulation in API requests.
+- **Domain Identifier**: Strictly **`agency_id`** across all database tables, DTOs, and domain models.
+- **Security Rule**: Strict boundary enforcement. All queries on agency entities MUST filter by `agency_id` (`findByIdAndAgencyId`). Cross-agency access via ID manipulation is prohibited.
 
 ## 8. Android Client Architecture & Java 21 Toolchain Compatibility
 
@@ -140,6 +140,7 @@ The Customer and Technician Mobile Applications are developed natively in **Java
 **Architecture**: Room DB → PendingOperation Queue → WorkManager → Spring Boot `/api/v1/dispatch/visits/sync`.
 - **Payload Tracking**: `device_id`, `operation_id` (UUID idempotency key), `local_sequence` (BIGINT), `client_created_at`, `server_received_at`, `payload` (JSONB), `payload_version` (INT), `sync_status`.
 - **Security & Idempotency**: Authenticated JWT + `device_id` + `operation_id` + monotonic sequence + server state validation + audit logging.
+- **Conflict Handling**: If a field operation conflicts with authoritative server state (e.g. administrative cancellation), the event is recorded in `sync_conflicts` for manager review; it NEVER silently overwrites authoritative server state.
 - **Local Security**: SQLCipher database encryption with master key managed via the **Android Keystore System**. Automated local data wipe on user logout or session invalidation.
 
 ## 9. Payment Architecture
@@ -147,6 +148,7 @@ The Customer and Technician Mobile Applications are developed natively in **Java
 Clients **never** declare payment success. Payment state is strictly updated via server-to-server Webhooks or direct server verification. Detailed in [`docs/PAYMENT_ARCHITECTURE.md`](PAYMENT_ARCHITECTURE.md).
 - Deduplication key: `(provider, gateway_event_id)` in `payment_events`.
 - Webhook updates payment state → Outbox event `PaymentCompleted` → Triggers `InvoiceGenerated`.
+- PDF Engine: Strictly standardized on **`OpenPDF`**.
 
 ## 10. Inventory Concurrency
 
@@ -159,15 +161,15 @@ UPDATE chemical_batches SET current_quantity = current_quantity - deduction;
 INSERT inventory_transactions;
 INSERT service_material_usage;
 UPDATE service_visits SET status = 'COMPLETED';
-INSERT outbox_events(type='ServiceCompleted', ...);
+INSERT outbox_events(event_type='ServiceVisitCompleted', ...);
 COMMIT;
 ```
-Enforced by `CHECK (current_quantity >= 0)`. RabbitMQ is used AFTER commit only for downstream alerts and replenishment.
+Enforced by `CHECK (current_quantity_available >= 0)`. Downstream RabbitMQ listeners consume `ServiceVisitCompleted` purely for async reporting, low-stock threshold monitoring, and replenishment alerts.
 
 ## 11. Booking Slot Concurrency
 
 Handled via `availability_slots` with `booked_count` and `capacity`.
-- Two-tier model: Agency Capacity Pool (`employee_id IS NULL`) reserved at booking confirmation vs Named Technician Slot (`employee_id IS NOT NULL`).
+- Two-tier model: Agency Capacity Pool (`employee_id IS NULL`, scoped by `agency_id` and `service_category_id`) reserved at booking confirmation vs Named Technician Slot (`employee_id IS NOT NULL`).
 - Transactional `SELECT ... FOR UPDATE` during booking confirmation.
 - Assignment of specific technicians to Work Orders is decoupled from slot reservation.
 
@@ -175,11 +177,13 @@ Handled via `availability_slots` with `booked_count` and `capacity`.
 
 Managed via `file_metadata` table in the `files` module.
 - Presigned URLs are generated ONLY after verifying authorization in the backend.
+- **Storage Abstraction:** Decoupled via `ObjectStoragePort` interface, with **AWS S3-compatible API** (AWS S3 / MinIO for local dev) as the default V1 provider.
 
-## 13. Scheduling
+## 13. Scheduling & Multi-Instance High Availability
 
 - Spring `@Scheduled` for AMC daily cron (`01:00 UTC`), outbox polling, and batch expiry checks.
-- Quartz scheduler upgrade path available if distributed clustering is required.
+- Multi-instance single execution is guaranteed by PostgreSQL transaction-level advisory locks (`SELECT pg_try_advisory_xact_lock(...)`).
+
 
 ## 14. Observability
 

@@ -1,9 +1,11 @@
 # Concurrency, Idempotency & Outbox Specification
-Implementation Status: Documentation / Architecture Baseline
-— Backend: Not implemented
-— Customer Android: Not implemented
-— Technician Android: Not implemented
-— Admin Web: Not implemented
+**Architecture Baseline:** 2026.09 (V2.1.0)  
+**Document Version:** 2.1.0  
+**Implementation Status:** Documentation & Specification Baseline  
+— Backend: Java 21 + Spring Boot 3.3.x  
+— Primary Database: PostgreSQL 16  
+— Cache & Coordination: Redis 7.2  
+— Message Broker: RabbitMQ 3.13.x  
 
 > **SOLE AUTHORITY DECLARATION:** This document is the single authoritative source of truth for concurrency control, database locking mechanisms, idempotency safeguards, and transactional message publication across the entire Pest Control ERP system. All code, domain services, background jobs, and subagent skills must strictly conform to the specifications herein.
 
@@ -15,15 +17,15 @@ Implementation Status: Documentation / Architecture Baseline
 To support both self-service customer checkout and multi-technician dispatching without race conditions or premature resource locking:
 
 1. **Availability Scope:**
-   - **Agency Capacity Pool (`employee_id IS NULL`):** Default reservation unit for self-service customer checkout. Represents the aggregated concurrent appointment capacity of a branch/agency territory for a specific service category, date, and time window (e.g. `10:00–12:00`, `capacity = 5`).
+   - **Agency Capacity Pool (`employee_id IS NULL`):** Default reservation unit for self-service customer checkout. Represents the aggregated concurrent appointment capacity of a branch/agency territory for a specific service category (`service_category_id`), date, and time window (e.g. `10:00–12:00`, `capacity = 5`).
    - **Named Technician Slot (`employee_id IS NOT NULL`):** Represents an individual technician's assigned calendar schedule (`capacity = 1`). Used when a customer or dispatcher explicitly requests a specific technician.
-2. **Capacity Owner:** The Agency/Branch owning the postal code/territory manages the slot capacity pool.
+2. **Capacity Owner:** The Agency/Branch (`agency_id`) owning the postal code/territory manages the slot capacity pool.
 3. **Reservation Unit:** Exactly 1 capacity unit is reserved per customer booking item during checkout (`booked_count = booked_count + 1`).
 4. **Assignment Timing (Decoupled from Reservation):**
    - At booking confirmation: 1 capacity unit is deducted from the Agency Capacity Pool. The booking is `CONFIRMED`.
    - During dispatch window: The Dispatcher or Auto-Dispatch algorithm creates/assigns an operational `WorkOrder` and `ServiceVisit` to a specific, certified `Employee`. This decouples commercial booking confirmation from physical technician assignment.
 
-### 1.2 Schema Definition
+### 1.2 Schema Definition & Partial Unique Indexes
 ```sql
 CREATE TABLE availability_slots (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -36,8 +38,8 @@ CREATE TABLE availability_slots (
     capacity INTEGER NOT NULL DEFAULT 1 CHECK (capacity >= 1),
     booked_count INTEGER NOT NULL DEFAULT 0 CHECK (booked_count >= 0),
     is_blocked BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_slot_capacity CHECK (booked_count <= capacity)
 );
 
@@ -46,7 +48,7 @@ CREATE UNIQUE INDEX uq_slot_employee_time
 ON availability_slots(employee_id, service_date, start_time) 
 WHERE employee_id IS NOT NULL;
 
--- Unique index for Agency Capacity Pools
+-- Unique index for Agency Capacity Pools (prevents duplicate capacity pools for the same service category)
 CREATE UNIQUE INDEX uq_slot_agency_pool 
 ON availability_slots(agency_id, service_category_id, service_date, start_time) 
 WHERE employee_id IS NULL;
@@ -97,15 +99,9 @@ POST /api/v1/bookings/confirm
 
 ### 2.1 Core Architectural Rule
 **Authoritative inventory deduction MUST execute strictly inside the SAME PostgreSQL transaction as service visit completion.**  
-RabbitMQ is NEVER used to execute inventory deductions. RabbitMQ domain events (`ServiceCompleted`, `LowStockAlert`) are dispatched AFTER commit exclusively for downstream asynchronous reactions (manager notifications, auto-replenishment purchase requests, analytics).
+RabbitMQ is NEVER used to execute inventory deductions. RabbitMQ domain events (`ServiceVisitCompleted`, `LowStockAlert`) are dispatched AFTER commit exclusively for downstream asynchronous reactions (manager notifications, auto-replenishment purchase requests, analytics).
 
-### 2.2 Schema Constraints
-```sql
-ALTER TABLE chemical_batches 
-ADD CONSTRAINT chk_batch_qty_nonneg CHECK (current_quantity_available >= 0);
-```
-
-### 2.3 Service Visit Completion & Deduction Flow
+### 2.2 Material Deduction Flow (Row-Level Locking & Expiry Validation)
 ```text
 POST /api/v1/dispatch/visits/{visitId}/complete
   BEGIN TRANSACTION
@@ -154,11 +150,10 @@ POST /api/v1/dispatch/visits/{visitId}/complete
     WHERE id = :visitId;
 
     -- 4. Check Work Order and Booking derived completion state
-    -- (Evaluates if all sibling visits/orders are completed)
 
     -- 5. Insert transactional outbox event
     INSERT INTO outbox_events(id, event_type, aggregate_type, aggregate_id, payload, publication_status)
-    VALUES (gen_random_uuid(), 'ServiceCompleted', 'ServiceVisit', :visitId, :serviceCompletedJson, 'PENDING');
+    VALUES (gen_random_uuid(), 'ServiceVisitCompleted', 'ServiceVisit', :visitId, :serviceCompletedJson, 'PENDING');
   COMMIT;
 ```
 
@@ -172,30 +167,10 @@ If a visit is formally invalidated or cancelled after completion:
 ## 3. Payment Webhook Idempotency & Lifecycle
 
 ### 3.1 Webhook Deduplication Key: `(provider, gateway_event_id)`
-Payment gateways (Razorpay, Stripe) deliver multiple webhook events per payment (e.g. `payment.authorized`, `payment.captured`, `payment.failed`, `refund.created`).  
+Payment gateways (Razorpay, Stripe) deliver multiple webhook events per payment (`payment.authorized`, `payment.captured`, `payment.failed`, `refund.created`).  
 **The sole mechanism for event deduplication is the unique constraint `(provider, gateway_event_id)` on the `payment_events` table.**  
-*Shortcuts that query the payments table status and return early are strictly prohibited.*
 
-### 3.2 Schema Definition
-```sql
-CREATE TABLE payment_events (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    payment_id UUID REFERENCES payments(id),
-    provider VARCHAR(50) NOT NULL,          -- 'RAZORPAY', 'STRIPE'
-    gateway_event_id VARCHAR(255) NOT NULL, -- Unique event ID from webhook payload
-    gateway_payment_id VARCHAR(255),
-    event_type VARCHAR(100) NOT NULL,       -- 'payment.captured', 'payment.failed', etc.
-    payload_hash VARCHAR(64) NOT NULL,      -- SHA-256 hash of raw payload
-    raw_payload JSONB NOT NULL,
-    received_at TIMESTAMPTZ DEFAULT NOW(),
-    processed_at TIMESTAMPTZ,
-    processing_status VARCHAR(20) NOT NULL DEFAULT 'PENDING', -- PENDING, PROCESSED, FAILED, SKIPPED
-    error_message TEXT,
-    CONSTRAINT uq_payment_event UNIQUE (provider, gateway_event_id)
-);
-```
-
-### 3.3 Authoritative Webhook Processing Pipeline
+### 3.2 Authoritative Webhook Processing Pipeline
 ```text
 POST /api/v1/payments/webhooks/{provider}
   1. Cryptographic HMAC Signature Verification:
@@ -208,7 +183,6 @@ POST /api/v1/payments/webhooks/{provider}
      VALUES (gen_random_uuid(), :provider, :eventId, :paymentId, :eventType, :hash, :payloadJson, 'PENDING')
      ON CONFLICT (provider, gateway_event_id) DO NOTHING;
 
-     -- If 0 rows were inserted, this exact webhook event was already received and processed.
      IF rows_affected == 0 THEN
        RETURN HTTP 200 OK; -- Idempotent acknowledgement to gateway
      END IF;
@@ -217,9 +191,7 @@ POST /api/v1/payments/webhooks/{provider}
      BEGIN TRANSACTION
        SELECT * FROM payments WHERE id = :internalPaymentId FOR UPDATE;
 
-       -- Authoritative state machine transition validation:
-       -- PENDING -> AUTHORIZED -> PAID | PARTIAL | FAILED
-       -- PAID -> REFUNDED | PARTIALLY_REFUNDED
+       -- Authoritative state machine transition validation
        ValidateStateTransition(currentStatus, newStatusFromEvent);
 
        UPDATE payments 
@@ -247,7 +219,7 @@ POST /api/v1/payments/webhooks/{provider}
 
 ---
 
-## 4. Transactional Outbox Pattern — Sole Publication Pipeline
+## 4. Transactional Outbox Pattern & RabbitMQ Delivery Guarantees
 
 ### 4.1 Canonical Outbox Contract
 ```text
@@ -265,8 +237,6 @@ POST /api/v1/payments/webhooks/{provider}
         ├── 5. Publish domain event to RabbitMQ Exchange
         ├── 6. On broker ACK -> UPDATE outbox_events SET publication_status = 'PUBLISHED', published_at = NOW();
         └── 7. On broker NACK/Error -> UPDATE outbox_events SET retry_count++, last_error = ...;
-```
-
 ### 4.2 Non-Negotiable Publication Rules
 1. **NO direct RabbitMQ publishing from business transactions.** Direct calls to `RabbitTemplate.convertAndSend()` inside `@Transactional` methods are strictly forbidden.
 2. **NO unreliable event listeners.** Spring `@TransactionalEventListener(phase = AFTER_COMMIT)` without outbox persistence is forbidden because broker downtime causes silent event loss.
@@ -293,6 +263,12 @@ CREATE INDEX idx_outbox_pending_poller
 ON outbox_events(publication_status, created_at) 
 WHERE publication_status = 'PENDING';
 ```
+
+### 4.4 RabbitMQ Message Ordering & Mandatory Consumer Idempotency
+1. **Ordering Guarantee Strategy:** While RabbitMQ delivers messages across distributed worker threads, message ordering per business entity is guaranteed by:
+   - Routing keys formatted with aggregate identifier: `pestcontrol.events.<module>.<entity_type>.<aggregate_id>`.
+   - Consumer validation of payload version / entity timestamp to discard out-of-order stale events.
+2. **Mandatory Consumer Idempotency:** Every consumer listener (Notifications, Invoicing, AMC, Support) MUST maintain an idempotent processing check (e.g. checking `inbox_events` or evaluating current entity state) prior to side-effect execution.
 
 ---
 
@@ -335,7 +311,7 @@ CREATE INDEX idx_sync_conflicts_agency ON sync_conflicts(agency_id, resolution_s
 3. Check `operation_id` against `offline_sync_logs`:
    - If `operation_id` is already logged as processed -> Return previous result (safe replay).
    - If `operation_id` is new -> Execute domain operation in a database transaction and log `operation_id`.
-4. Conflict Handling: Completed physical field work takes precedence over administrative cancellations, recording a row in `sync_conflicts` for manager audit.
+4. Conflict Handling: Completed physical field work conflicting with server cancellation is recorded in `sync_conflicts` for manager audit; it NEVER silently overwrites authoritative server state.
 
 ---
 
@@ -343,12 +319,12 @@ CREATE INDEX idx_sync_conflicts_agency ON sync_conflicts(agency_id, resolution_s
 
 Mutating HTTP POST requests from web and mobile clients (e.g. `POST /api/v1/bookings`, `POST /api/v1/payments/initiate`) must supply an `Idempotency-Key` header.
 
-To prevent payload tampering or accidental key reuse across different requests, the backend stores a deterministic SHA-256 fingerprint (`request_hash`) of the request payload and binds the key to the tenant, user, and endpoint:
+To prevent payload tampering or accidental key reuse across different requests, the backend stores a deterministic SHA-256 fingerprint (`request_hash`) of the request payload and binds the key to the agency, user, and endpoint:
 
 ```sql
 CREATE TABLE idempotency_keys (
     key VARCHAR(255) PRIMARY KEY,
-    tenant_id UUID REFERENCES agencies(id),
+    agency_id UUID REFERENCES agencies(id),
     user_id UUID NOT NULL REFERENCES users(id),
     http_method VARCHAR(10) NOT NULL,
     request_path VARCHAR(500) NOT NULL,
@@ -361,12 +337,13 @@ CREATE TABLE idempotency_keys (
     expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours')
 );
 
-CREATE INDEX idx_idempotency_lookup ON idempotency_keys(tenant_id, user_id, request_path, key);
+CREATE INDEX idx_idempotency_lookup ON idempotency_keys(agency_id, user_id, request_path, key);
 CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
 ```
 
-**Fingerprint Validation Rule:**  
-If a request arrives with an existing `Idempotency-Key` but a different `request_hash`, `http_method`, or `request_path`, the server immediately rejects the call with HTTP `422 Unprocessable Entity` (`IDEMPOTENCY_KEY_PAYLOAD_MISMATCH`).
+**Fingerprint Validation Invariants:**  
+- **Same Key + Same `request_hash`:** Returns the exact previously cached HTTP response status and body without re-executing business logic.
+- **Same Key + Different `request_hash`:** Server immediately rejects the call with HTTP `422 Unprocessable Entity` (`IDEMPOTENCY_KEY_PAYLOAD_MISMATCH`).
 
 ---
 

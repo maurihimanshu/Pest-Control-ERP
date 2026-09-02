@@ -570,7 +570,7 @@ CREATE INDEX idx_sync_conflicts_agency ON sync_conflicts(agency_id, resolution_s
 -- Idempotency Keys (API request deduplication with payload fingerprinting)
 CREATE TABLE idempotency_keys (
     key VARCHAR(255) PRIMARY KEY,
-    tenant_id UUID REFERENCES agencies(id),
+    agency_id UUID REFERENCES agencies(id),
     user_id UUID NOT NULL REFERENCES users(id),
     http_method VARCHAR(10) NOT NULL,
     request_path VARCHAR(500) NOT NULL,
@@ -582,7 +582,7 @@ CREATE TABLE idempotency_keys (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours')
 );
-CREATE INDEX idx_idempotency_lookup ON idempotency_keys(tenant_id, user_id, request_path, key);
+CREATE INDEX idx_idempotency_lookup ON idempotency_keys(agency_id, user_id, request_path, key);
 CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
 ```
 

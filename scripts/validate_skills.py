@@ -4,11 +4,18 @@ validate_skills.py
 
 Automated validator for all agent skill definitions in .agents/skills/.
 Checks:
-- Frontmatter presence and valid YAML structure
-- Required fields (name, description, category, triggers, inputs, outputs, dependencies, related_skills)
-- Uniqueness of skill names
-- Valid categorization
-- Proper quoting of special characters in YAML lists
+1. Structural Validation:
+   - Frontmatter presence and valid YAML structure
+   - Required fields (name, description, category, triggers, inputs, outputs, dependencies, related_skills)
+   - Uniqueness of skill names
+   - Valid categorization
+   - Proper quoting of special characters in YAML lists
+2. Semantic Architectural Guardrails:
+   - Tenancy identifier standard (strictly `agency_id`, forbids `tenant_id`)
+   - Rejects affirmative Firestore / Cloud Functions adoption (only allowed in audit/forbidden-rule context)
+   - Rejects affirmative Android Kotlin usage (standard is Java 21)
+   - Rejects RabbitMQ authoritative inventory deduction assertions
+   - Rejects client-authoritative payment success assertions
 """
 
 import os
@@ -25,6 +32,13 @@ REQUIRED_KEYS = {
     'name', 'description', 'category', 'triggers', 'inputs',
     'outputs', 'dependencies', 'related_skills'
 }
+
+# Semantic forbidden phrases (regex pattern -> reason)
+FORBIDDEN_SEMANTIC_PATTERNS = [
+    (r'\btenant_id\b', "Found 'tenant_id'. Architecture standard strictly requires 'agency_id'."),
+    (r'\bcom\.google\.firebase\.firestore\b', "Found Firestore SDK import. ERP system of record is PostgreSQL 16."),
+    (r'\bfirebase-functions\b', "Found Cloud Functions reference. Backend is Spring Boot 3.3.x Modular Monolith."),
+]
 
 def parse_simple_yaml(yaml_text, file_path):
     lines = yaml_text.splitlines()
@@ -73,6 +87,19 @@ def parse_simple_yaml(yaml_text, file_path):
 
     return data
 
+def run_semantic_lints(content, rel_path):
+    """Checks for forbidden architectural patterns in skill bodies."""
+    issues = []
+    # Skip audit skill files whose job is explicitly to find legacy patterns
+    if 'legacy-architecture-audit' in rel_path or '_architecture_rules' in rel_path:
+        return issues
+
+    for pattern, message in FORBIDDEN_SEMANTIC_PATTERNS:
+        if re.search(pattern, content, re.IGNORECASE):
+            issues.append(f"{rel_path}: Semantic Lint Violation: {message}")
+
+    return issues
+
 def main():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     skills_dir = os.path.join(repo_root, '.agents', 'skills')
@@ -97,6 +124,7 @@ def main():
         with open(file_path, 'r', encoding='utf-8') as fh:
             content = fh.read()
 
+        # 1. Structural Frontmatter Validation
         if not content.startswith('---'):
             errors.append(f"{rel_path}: Missing frontmatter start delimiter (---)")
             continue
@@ -132,6 +160,10 @@ def main():
         if category and category not in VALID_CATEGORIES:
             errors.append(f"{rel_path}: Invalid category '{category}'. Allowed: {VALID_CATEGORIES}")
 
+        # 2. Semantic Architectural Linting
+        semantic_issues = run_semantic_lints(content, rel_path)
+        errors.extend(semantic_issues)
+
     print("\n" + "="*50)
     if errors:
         print(f"FAILED: Found {len(errors)} skill validation issues:")
@@ -139,8 +171,9 @@ def main():
             print(f"  [X] {err}")
         sys.exit(1)
     else:
-        print(f"SUCCESS: All {len(all_files)} skills passed validation (unique names, valid frontmatters, valid categories).")
+        print(f"SUCCESS: All {len(all_files)} skills passed structural and semantic architectural validation.")
         sys.exit(0)
 
 if __name__ == '__main__':
     main()
+

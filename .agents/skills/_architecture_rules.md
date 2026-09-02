@@ -205,8 +205,8 @@ Spring Security RBAC
 BookingCreated      WorkOrderCreated      PaymentInitiated      InvoiceGenerated
 BookingConfirmed    TechnicianAssigned    PaymentAuthorized     NotificationRequested
 BookingCancelled    TechnicianAccepted    PaymentCompleted      AMCVisitGenerated
-BookingCompleted    ServiceStarted        PaymentFailed         LowStockAlert
-BookingClosed       ServiceCompleted      PaymentRefunded
+BookingCompleted    ServiceVisitStarted   PaymentFailed         LowStockAlert
+BookingClosed       ServiceVisitCompleted PaymentRefunded
 ```
 
 ---

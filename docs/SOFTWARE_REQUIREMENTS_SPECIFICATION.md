@@ -1,8 +1,9 @@
 # Software Requirements Specification (SRS)
 ## Pest Control Enterprise Resource Planning (ERP) System
 
+**Architecture Baseline:** 2026.09 (V2.1.0)  
 **Document Version:** 3.0.0  
-**Target Systems:** Customer Android App, Technician Android App, Admin Web ERP Dashboard, Backend REST API  
+**Target Systems:** Customer Mobile App (Android / Java 21), Technician Mobile App (Android / Java 21, Offline-First), Admin Web ERP Dashboard (React / TypeScript), Backend REST API (Java 21 / Spring Boot Modular Monolith)  
 **Primary System of Record:** PostgreSQL 16  
 **External Supporting Services:** Firebase Authentication (Identity Provider), Firebase Cloud Messaging (Push Delivery), Payment Gateways (Razorpay/Stripe), Maps & Geocoding Provider, Transactional SMS & Email Providers  
 **Architecture Reference:** Modular Monolith ([`docs/ARCHITECTURE.md`](ARCHITECTURE.md), [`docs/MODULE_CATALOG.md`](MODULE_CATALOG.md))  
@@ -37,7 +38,7 @@
    - [7.2 Security & Data Protection](#72-security--data-protection)
    - [7.3 Reliability & Availability](#73-reliability--availability)
    - [7.4 Offline Durability & Data Integrity](#74-offline-durability--data-integrity)
-8. [Phased Release Scope](#8-phased-release-scope)
+8. [Phased Release Scope & Architecture Prerequisites](#8-phased-release-scope--architecture-prerequisites)
 
 ---
 
@@ -61,10 +62,10 @@ This document specifies the pure functional and non-functional requirements for 
 # 2. Scope of the System
 
 The platform coordinates the operational lifecycle across four primary application clients and a central backend service:
-1. **Customer Android App:** Self-service service discovery, upfront price estimations, slot selection, digital payments, real-time appointment tracking, AMC renewals, and service history.
-2. **Technician Android App:** Offline-capable field execution, job queue management, route navigation, task checklists, chemical dosage recording, photo evidence capture, and on-site customer signature acquisition.
-3. **Admin Web ERP Dashboard:** Centralized operations management, multi-branch dispatch boards, capacity management, billing reconciliation, technician skills matrix, inventory controls, and financial reporting.
-4. **Backend REST API:** Authoritative validation, business logic execution, state machine transitions, multi-tenant security isolation, and event coordination.
+1. **Customer Mobile App (Android / Java 21):** Self-service service discovery, upfront price estimations, slot selection, digital payments, real-time appointment tracking, AMC renewals, and service history.
+2. **Technician Mobile App (Android / Java 21, Offline-First):** Offline-capable field execution, job queue management, route navigation, task checklists, chemical dosage recording, photo evidence capture, and on-site customer signature acquisition.
+3. **Admin Web ERP Dashboard (React / TypeScript):** Centralized operations management, multi-branch dispatch boards, capacity management, billing reconciliation, technician skills matrix, inventory controls, and financial reporting.
+4. **Backend REST API (Spring Boot Modular Monolith):** Authoritative validation, business logic execution, state machine transitions, multi-tenant security isolation, and transactional event outbox coordination.
 
 ---
 
@@ -103,14 +104,15 @@ The platform shall enforce strict role-based access control across all APIs and 
 
 # 5. 3-Tier Operational Domain Concept
 
-To support multi-visit treatments, warranty follow-ups, and recurring AMC contracts without duplicating commercial records, the platform shall enforce a 3-tier operational separation:
+To support multi-visit treatments, warranty follow-ups, and recurring AMC contracts without duplicating commercial records, the platform shall enforce a 3-tier operational separation (governed by [`docs/BOOKING_STATE_MACHINE.md`](BOOKING_STATE_MACHINE.md)):
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                        1. Commercial Request                            │
 │                              BOOKING                                    │
 │  • Customer Details, Target Address, Selected Services, Pricing Model  │
-│  • Commercial Status: PENDING, CONFIRMED, IN_PROGRESS, COMPLETED, CLOSED│
+│  • Canonical Status: PENDING, CONFIRMED, IN_PROGRESS, COMPLETED,        │
+│                     CANCELLED, CLOSED                                   │
 │  • Payment Settlement Status: PENDING, AUTHORIZED, PAID, PARTIAL, etc. │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │ 1 : N
@@ -120,7 +122,8 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 │                             WORK ORDER                                  │
 │  • Operational Scope (Initial Treatment, Warranty Follow-Up, AMC Run)  │
 │  • Assigned Agency, Territory, Priority, SLA Due Date                   │
-│  • Operational Status: UNASSIGNED, ASSIGNED, IN_PROGRESS, COMPLETED     │
+│  • Canonical Status: ASSIGNED, ACCEPTED, REJECTED, ON_THE_WAY, ARRIVED, │
+│                     STARTED, COMPLETED                                  │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │ 1 : N
                                      ▼
@@ -128,7 +131,8 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 │                        3. Physical Execution                            │
 │                            SERVICE VISIT                                │
 │  • Assigned Field Technician, Scheduled Date & Time Slot                │
-│  • Visit Status: SCHEDULED, ON_THE_WAY, ARRIVED, STARTED, COMPLETED     │
+│  • Canonical Status: SCHEDULED, ON_THE_WAY, ARRIVED, STARTED,           │
+│                     COMPLETED, CANCELLED, FAILED                        │
 │  • Field Evidence: Timestamps, Checklist, Chemicals Used, Photos, Sign │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -141,7 +145,7 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 * **REQ-AUTH-001:** The platform shall authenticate Customers using Mobile Phone Number with SMS One-Time Password (OTP), with optional Google Sign-In federation.
 * **REQ-AUTH-002:** The platform shall authenticate Field Technicians using Employee ID/Mobile Number and a secure PIN paired with registered device hardware.
 * **REQ-AUTH-003:** The platform shall authenticate Administrative and Operational users using Corporate Email and Password enforced by Multi-Factor Authentication (MFA).
-* **REQ-AUTH-004:** The platform shall validate all user identity tokens on every API request and immediately reject deactivated accounts regardless of token validity.
+* **REQ-AUTH-004:** The platform shall validate all user identity tokens against the configured Identity Provider (IdP) on every API request and immediately reject deactivated accounts regardless of token validity.
 
 ## 6.2 Customer & Address Management
 * **REQ-CUST-001:** The platform shall allow Customers to maintain multiple service addresses with structured street address, city, postal code, and geographic coordinates (latitude/longitude).
@@ -150,11 +154,11 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 ## 6.3 Service Catalog & Pricing Engine
 * **REQ-CAT-001:** The platform shall support a hierarchical service catalog organized by categories, service definitions, treatment packages, and warranty terms.
 * **REQ-CAT-002:** The platform shall compute service pricing dynamically on the server based on configurable pricing models (unit area, BHK configuration, property type, pest severity level, and add-on treatments).
-* **REQ-CAT-003:** The platform shall support promotional coupon validation with constraints for date validity, minimum order value, customer usage limits, and maximum discount caps.
+* **REQ-CAT-003:** The platform shall support promotional coupon validation with constraints for date validity, minimum order value, per-customer usage limits, and maximum discount caps.
 
 ## 6.4 Commercial Bookings & Slot Reservations
 * **REQ-BKG-001:** The platform shall allow Customers and Dispatchers to create commercial bookings selecting services, service address, preferred date, and time slot.
-* **REQ-BKG-002:** The platform shall maintain availability slot capacity per agency territory and prevent overbooking by reserving slot capacity upon booking initiation.
+* **REQ-BKG-002:** The platform shall maintain availability slot capacity per agency territory and prevent overbooking by atomically reserving slot capacity within database transactions (`SELECT FOR UPDATE`).
 * **REQ-BKG-003:** For Cash on Delivery (COD) bookings, the platform shall confirm the booking upon slot reservation while keeping payment status as `PENDING`.
 * **REQ-BKG-004:** For Prepaid bookings, the platform shall confirm the booking only after server verification of successful payment authorization.
 * **REQ-BKG-005:** The platform shall support booking rescheduling and cancellation with automated slot capacity adjustments.
@@ -169,7 +173,7 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 * **REQ-FLD-001:** The platform shall support full offline mobile execution for Field Technicians in zero-connectivity environments, storing actions locally and synchronizing when connectivity resumes.
 * **REQ-FLD-002:** The platform shall track field visit state transitions: `SCHEDULED` $\rightarrow$ `ON_THE_WAY` $\rightarrow$ `ARRIVED` $\rightarrow$ `STARTED` $\rightarrow$ `COMPLETED` (or `FAILED`).
 * **REQ-FLD-003:** The mobile application shall capture mandatory service evidence: GPS arrival coordinates, pre-treatment photos, dynamic task checklist verification, post-treatment photos, chemical batch usage, and customer digital signature.
-* **REQ-FLD-004:** The platform shall resolve offline synchronization conflicts deterministically, preserving completed field work and logging audit entries for concurrent modifications.
+* **REQ-FLD-004:** An offline operation that conflicts with authoritative server-side state (e.g. administrative cancellation) shall be preserved as a synchronization conflict record (`sync_conflicts`) and routed through the defined conflict-resolution workflow; it shall NOT silently overwrite the authoritative state.
 
 ## 6.7 Payments, Cash Collection & Invoicing
 * **REQ-PAY-001:** The platform shall integrate with trusted payment gateways to support card, net banking, and UPI transactions without trusting client-declared payment success.
@@ -181,7 +185,7 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 ## 6.8 Inventory & Chemical Management
 * **REQ-INV-001:** The platform shall track chemical products, regulatory pesticide registration numbers, and batch expiration dates enforcing First-In, First-Out (FIFO) consumption.
 * **REQ-INV-002:** The platform shall track inventory across multiple physical tiers: Central Warehouse $\rightarrow$ Branch Warehouse $\rightarrow$ Technician Trunk Stock $\rightarrow$ Service Consumption.
-* **REQ-INV-003:** The platform shall execute authoritative inventory deductions within the service visit completion transaction and reject deductions exceeding available batch quantities.
+* **REQ-INV-003:** The platform shall execute authoritative inventory deductions strictly within the service visit completion database transaction, locking the chemical batch row and rejecting deductions exceeding available stock. Downstream notifications and replenishment alerts shall be triggered via transactional domain events.
 * **REQ-INV-004:** The platform shall calculate the exact material Cost of Goods Sold (COGS) for every completed service visit based on batch unit costs.
 
 ## 6.9 Branch Expense & Operational Accounting
@@ -190,7 +194,7 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 
 ## 6.10 Annual Maintenance Contracts (AMC)
 * **REQ-AMC-001:** The platform shall support multi-visit Annual Maintenance Contracts (Quarterly, Bi-Monthly, Monthly) with contract term tracking.
-* **REQ-AMC-002:** The platform shall automatically generate child operational work orders for upcoming AMC visits 7 days prior to their scheduled due date.
+* **REQ-AMC-002:** The platform shall automatically generate child operational work orders for upcoming AMC visits 7 days prior to their scheduled due date via single-instance scheduled batch jobs.
 
 ## 6.11 Customer Support, Ratings & Escalations
 * **REQ-SUP-001:** The platform shall capture 1-to-5 star customer ratings and written feedback following service completion.
@@ -198,7 +202,7 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 * **REQ-SUP-003:** The platform shall support warranty revisit claims linked to original booking records.
 
 ## 6.12 Notifications & Alerts Engine
-* **REQ-NOT-001:** The platform shall deliver real-time push notifications, transactional SMS messages, and formatted email receipts for critical operational events (booking confirmation, technician arrival, service completion, payment receipt).
+* **REQ-NOT-001:** The platform shall deliver real-time push notifications, transactional SMS messages, and formatted email receipts for critical operational events (`BookingConfirmed`, `TechnicianAssigned`, `TechnicianEnRoute`, `ServiceVisitCompleted`, `PaymentCompleted`, `InvoiceGenerated`, `AMCVisitGenerated`).
 
 ## 6.13 Audit Trails & Compliance
 * **REQ-AUD-001:** The platform shall record an immutable, append-only audit trail for all business state transitions, administrative modifications, inventory adjustments, and dispatch overrides.
@@ -217,7 +221,7 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 
 ### 7.2 Security & Data Protection
 * **NFR-SEC-001:** All client-server communications shall use TLS 1.3 encryption.
-* **NFR-SEC-002:** The platform shall enforce strict multi-tenant agency data isolation preventing cross-branch resource access.
+* **NFR-SEC-002:** The platform shall enforce strict multi-tenant agency data isolation (`agency_id`) preventing cross-branch resource access.
 * **NFR-SEC-003:** No Personally Identifiable Information (PII), authentication tokens, or raw payment card data shall ever be recorded in system logs.
 
 ### 7.3 Reliability & Availability
@@ -230,7 +234,9 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 
 ---
 
-# 8. Phased Release Scope
+# 8. Phased Release Scope & Architecture Prerequisites
+
+> **CROSS-CUTTING FOUNDATION PREREQUISITE:** Core infrastructure (PostgreSQL schemas, Flyway migrations, Redis, RabbitMQ outbox poller, Spring Security filter chain, multi-tenant `agency_id` guards, and Android SQLite Room encrypted queues) represents a mandatory prerequisite before Release 1 feature delivery.
 
 | Functional Area / Capability | Release 1 (Core Operations) | Release 2 (Financial & ERP) | Release 3 (Advanced Automation) |
 |:---|:---:|:---:|:---:|
@@ -249,3 +255,4 @@ To support multi-visit treatments, warranty follow-ups, and recurring AMC contra
 | Agency Multi-Tenant Management Portal | — | — | ✅ |
 | WhatsApp Business Channel Integration | — | — | ✅ |
 | Mobile Barcode Scanning for Chemical Batches | — | — | ✅ |
+

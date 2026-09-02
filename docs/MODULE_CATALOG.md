@@ -1,5 +1,6 @@
 # Canonical Module Catalog & Architecture Registry
-**Document Version:** 1.0.0  
+**Architecture Baseline:** 2026.09 (V2.1.0)  
+**Document Version:** 2.1.0  
 **Pattern:** Spring Boot 3.x Modular Monolith (Single Deployable Artifact)  
 **Package Base:** `com.pestcontrol.modules.*`  
 **System of Record:** PostgreSQL 16  
@@ -9,12 +10,16 @@
 
 ## 1. Architectural Guardrails & Module Boundary Rules
 
-1. **Monolithic Deployment, Modular Design:** The entire system is built and deployed as a single Java 21 Spring Boot JAR artifact comprising 18 strictly bounded domain modules.
-2. **Package Isolation:** Every module resides in its own root package under `com.pestcontrol.modules.<module_name>`.
-3. **No Cross-Module Repository Access:** A module may NEVER inject or reference another module's `@Repository`, `@Entity`, or internal database tables directly.
-4. **Public Service Interfaces:** Synchronous cross-module communication is strictly conducted through exported public Java service interfaces located in `com.pestcontrol.modules.<module_name>.api.*`.
-5. **Asynchronous Decoupling via Outbox & RabbitMQ:** Cross-module asynchronous reactions are driven by domain events persisted transactionally into `outbox_events` and published via RabbitMQ.
-6. **No Circular Dependencies:** The dependency graph between modules must be a Directed Acyclic Graph (DAG). Circular package imports are strictly prohibited and enforced during build time.
+1. **Monolithic Deployment, Modular Design:** The entire system is built and deployed as a single Java 21 Spring Boot JAR artifact comprising 18 strictly bounded domain modules under `com.pestcontrol.modules.*`.
+2. **Subdomains vs. Modules:**
+   - **`catalog`:** Implements both the Service Catalog and Dynamic Pricing subdomains. There is NO separate `pricing` Java module.
+   - **`payments`:** Implements payment gateway orchestration, COD reconciliation, and sequential PDF Invoicing in V1. There is NO separate `invoices` Java module.
+   - **`employees`:** Implements the `Employee` aggregate. Technicians, Dispatchers, and Agency Managers are roles within the Employee identity model, NOT separate entities.
+3. **Tenancy Identifier Standard:** All agency-scoped entities and APIs strictly use **`agency_id`** (never `tenant_id`).
+4. **No Cross-Module Repository Access:** A module may NEVER inject or reference another module's `@Repository`, `@Entity`, or internal database tables directly.
+5. **Public Service Interfaces:** Synchronous cross-module communication is strictly conducted through exported public Java service interfaces located in `com.pestcontrol.modules.<module_name>.api.*`.
+6. **Asynchronous Decoupling via Outbox & RabbitMQ:** Cross-module asynchronous reactions are driven by domain events persisted transactionally into `outbox_events` and published via RabbitMQ.
+7. **No Circular Dependencies:** The dependency graph between modules must be a Directed Acyclic Graph (DAG). Circular package imports are strictly prohibited.
 
 ---
 
@@ -121,7 +126,7 @@ com.pestcontrol.modules.
 * **Responsibility:** Operational dispatch management, owning both `work_orders` and `service_visits` (1:N cardinality), technician job assignment, dispatch board queries, field checklists, and technician offline queue synchronization.
 * **Owned Tables:** `work_orders`, `service_visits`, `service_checklists`, `offline_sync_logs`
 * **Public Service API:** `WorkOrderService`, `ServiceVisitService`, `DispatchAssignmentService`, `OfflineSyncService`
-* **Emitted Events:** `WorkOrderCreated`, `TechnicianAssigned`, `TechnicianAccepted`, `TechnicianRejected`, `ServiceVisitStarted`, `ServiceCompleted`, `ServiceVisitFailed`, `WorkOrderCompleted`
+* **Emitted Events:** `WorkOrderCreated`, `TechnicianAssigned`, `TechnicianAccepted`, `TechnicianRejected`, `ServiceVisitStarted`, `ServiceVisitCompleted`, `ServiceVisitFailed`, `WorkOrderCompleted`
 * **Consumed Events:** `BookingConfirmed`, `BookingCancelled`, `AMCVisitScheduled`
 * **Permitted Dependencies:** `bookings`, `employees`, `agencies`, `inventory`, `audit`, `outbox`
 * **Forbidden Dependencies:** `payments` (direct repository/entity access), `catalog`
@@ -132,7 +137,7 @@ com.pestcontrol.modules.
 * **Owned Tables:** `payments`, `payment_events`, `payment_transactions`, `invoices`, `invoice_items`
 * **Public Service API:** `PaymentProcessingService`, `WebhookHandlingService`, `InvoiceGenerationService`, `RefundService`
 * **Emitted Events:** `PaymentInitiated`, `PaymentAuthorized`, `PaymentCompleted`, `PaymentFailed`, `PaymentRefunded`, `InvoiceGenerated`
-* **Consumed Events:** `BookingCreated`, `BookingCancelled`, `ServiceCompleted`
+* **Consumed Events:** `BookingCreated`, `BookingCancelled`, `ServiceVisitCompleted`
 * **Permitted Dependencies:** `bookings`, `customers`, `files`, `audit`, `outbox`
 * **Forbidden Dependencies:** `inventory`, `employees`, `dispatch` (direct repository/entity access)
 
@@ -142,7 +147,7 @@ com.pestcontrol.modules.
 * **Owned Tables:** `chemical_products`, `chemical_batches`, `inventory_locations`, `inventory_transactions`, `service_material_usage`
 * **Public Service API:** `InventoryStockService`, `BatchTrackingService`, `MaterialConsumptionService`, `WarehouseTransferService`
 * **Emitted Events:** `StockReceived`, `StockTransferred`, `LowStockAlert`, `BatchExpiredAlert`
-* **Consumed Events:** `ServiceCompleted` (for async downstream reporting and replenishment alerts; authoritative deduction is executed synchronously inside visit completion transaction)
+* **Consumed Events:** `ServiceVisitCompleted` (for async downstream reporting and replenishment alerts; authoritative deduction is executed synchronously inside visit completion transaction)
 * **Permitted Dependencies:** `agencies`, `employees`, `audit`, `outbox`
 * **Forbidden Dependencies:** `bookings`, `payments`, `support`
 
@@ -162,7 +167,7 @@ com.pestcontrol.modules.
 * **Owned Tables:** `amc_contracts`, `amc_schedules`
 * **Public Service API:** `AMCContractService`, `AMCScheduleService`
 * **Emitted Events:** `AMCContractCreated`, `AMCVisitGenerated`, `AMCContractTerminated`
-* **Consumed Events:** `ServiceCompleted`, `PaymentCompleted`
+* **Consumed Events:** `ServiceVisitCompleted`, `PaymentCompleted`
 * **Permitted Dependencies:** `customers`, `catalog`, `bookings`, `dispatch`, `audit`, `outbox`
 * **Forbidden Dependencies:** `inventory`, `expenses`
 
@@ -172,7 +177,7 @@ com.pestcontrol.modules.
 * **Owned Tables:** `notifications`, `notification_templates`, `device_tokens`
 * **Public Service API:** `NotificationDispatchService`, `DeviceRegistrationService`
 * **Emitted Events:** `NotificationSent`, `NotificationDeliveryFailed`
-* **Consumed Events:** `BookingConfirmed`, `BookingCancelled`, `TechnicianAssigned`, `ServiceCompleted`, `PaymentCompleted`, `InvoiceGenerated`, `LowStockAlert`
+* **Consumed Events:** `BookingConfirmed`, `BookingCancelled`, `TechnicianAssigned`, `ServiceVisitCompleted`, `PaymentCompleted`, `InvoiceGenerated`, `LowStockAlert`
 * **Permitted Dependencies:** `users`, `audit`
 * **Forbidden Dependencies:** `bookings`, `dispatch`, `payments`, `inventory` (Direct database/entity dependencies forbidden; reacts strictly to domain event payloads)
 
@@ -182,7 +187,7 @@ com.pestcontrol.modules.
 * **Owned Tables:** `support_tickets`, `support_messages`, `service_ratings`
 * **Public Service API:** `SupportTicketService`, `RatingFeedbackService`
 * **Emitted Events:** `TicketCreated`, `TicketEscalated`, `WarrantyClaimApproved`
-* **Consumed Events:** `ServiceCompleted`
+* **Consumed Events:** `ServiceVisitCompleted`
 * **Permitted Dependencies:** `customers`, `bookings`, `dispatch`, `audit`, `outbox`
 * **Forbidden Dependencies:** `inventory`, `pricing`
 
@@ -234,9 +239,9 @@ com.pestcontrol.modules.
 |:---|:---|:---|
 | **`bookings`** | `customers`, `catalog`, `agencies`, `audit`, `outbox` | Receives: `PaymentCompleted`, `WorkOrderCompleted` |
 | **`dispatch`** | `bookings`, `employees`, `agencies`, `inventory`, `audit`, `outbox` | Receives: `BookingConfirmed`, `BookingCancelled`, `AMCVisitScheduled` |
-| **`payments`** | `bookings`, `customers`, `files`, `audit`, `outbox` | Receives: `BookingCreated`, `ServiceCompleted` |
-| **`inventory`**| `agencies`, `employees`, `audit`, `outbox` | Receives: `ServiceCompleted` (for alerts/replenishment) |
+| **`payments`** | `bookings`, `customers`, `files`, `audit`, `outbox` | Receives: `BookingCreated`, `ServiceVisitCompleted` |
+| **`inventory`**| `agencies`, `employees`, `audit`, `outbox` | Receives: `ServiceVisitCompleted` (for alerts/replenishment) |
 | **`notifications`**| `users`, `audit` | Receives: All business domain events |
-| **`amc`** | `customers`, `catalog`, `bookings`, `dispatch`, `audit`, `outbox` | Receives: `PaymentCompleted`, `ServiceCompleted` |
-| **`support`** | `customers`, `bookings`, `dispatch`, `audit`, `outbox` | Receives: `ServiceCompleted` |
+| **`amc`** | `customers`, `catalog`, `bookings`, `dispatch`, `audit`, `outbox` | Receives: `PaymentCompleted`, `ServiceVisitCompleted` |
+| **`support`** | `customers`, `bookings`, `dispatch`, `audit`, `outbox` | Receives: `ServiceVisitCompleted` |
 | **`reporting`**| Read-only access across domain query services | Receives: Scheduled cron rollup triggers |
